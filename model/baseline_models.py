@@ -75,9 +75,9 @@ class one_d_cnn_lstm_att(nn.Module):
         self.att_mat2 = torch.nn.Parameter(torch.rand(n_att, d_att), requires_grad=True)
 
         self.dense_relu1 = nn.ReLU()
-        self.dense2 = nn.Linear(128, 64)
         self.dense_relu2 = nn.ReLU()
 
+        self.dense2 = nn.Linear(128, 64)
         self.dense1 = nn.Linear(self.lstm_hidden_size*2+88, 128) if global_feature is 1 else nn.Linear(self.lstm_hidden_size*2, 128)
         self.pred_emotion_layer = nn.Linear(64, self.num_emo_classes) 
         self.pred_gender_layer = nn.Linear(64, self.num_gender_class)

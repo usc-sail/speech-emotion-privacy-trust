@@ -82,7 +82,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', default='iemocap')
     parser.add_argument('--feature_len', default=128)
     parser.add_argument('--feature_type', default='mel_spec')
-    parser.add_argument('--test_session',  default='Session5')
+    parser.add_argument('--test_fold',  default='fold1')
     parser.add_argument('--aug', default=0, type=int)
     parser.add_argument('--norm', default='min_max')
     parser.add_argument('--test_id',  default=0)
@@ -94,13 +94,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # read args
-    test_session = args.test_session
+    test_fold = args.test_fold
     shift = 'shift' if int(args.shift) == 1 else 'without_shift'
     
     win_len, shift_len = int(args.win_len), int(int(args.win_len)/4)
     feature_len, feature_type = int(args.feature_len), args.feature_type
     
-    train_arr, test_arr, validation_arr = args.train_arr, args.test_arr, args.test_arr
+    train_arr, test_arr, validation_arr = args.train_arr, args.test_arr, args.validation_arr
     
     # save preprocess file
     root_path = Path('/media/data/projects/speech-privacy')
@@ -113,7 +113,6 @@ if __name__ == '__main__':
     # feature folder
     feature_path = root_path.joinpath('feature', feature_type)
     
-    feature_list = ()
     training_data_list, training_norm_len = [], []
     training_norm_dict = {}
     training_global_norm_dict = {}
@@ -328,8 +327,10 @@ if __name__ == '__main__':
                                 sentence_file = line.split('\t')[-3]
                                 label = line.split('\t')[-2]
 
-                                if label == 'ang' or label == 'neu' or label == 'sad' or label == 'hap':
-                                    
+                                if label == 'ang' or label == 'neu' or label == 'sad' or label == 'hap' or label == 'exc':
+                                    if label == 'exc':
+                                        label = 'hap'
+
                                     data = data_dict[sentence_file]
                                     global_data = data['gemaps']
                                     save_data = np.array(data['mel1'])[0].T if feature_type == 'mel_spec' else np.array(data['mfcc'])[0][:40].T
@@ -338,7 +339,6 @@ if __name__ == '__main__':
                                     
                                     # print(speaker_id, gender, label)
                                     save_data_dict(save_data, test_speaker_id_arr, validation_speaker_id_arr, data_stats_dict, label, gender, speaker_id)
-        
         speaker_norm_dict, speaker_global_norm_dict = {}, {}
         for speaker_id in training_norm_dict:
             norm_data_list = training_norm_dict[speaker_id]
@@ -394,7 +394,6 @@ if __name__ == '__main__':
                 aug_idx_list = np.random.randint(0, len(aug_key_list), size=number_of_aug)
                 
                 for idx, aug_idx in enumerate(aug_idx_list):
-                    # pdb.set_trace()
                     key = aug_key_list[aug_idx]
                     tmp_data = training_dict[key]['data']
 
@@ -405,18 +404,18 @@ if __name__ == '__main__':
                     training_dict[key+'_'+str(idx)]['data'] = augmented_audio
         
         create_folder(preprocess_path.joinpath(data_set_str))
-        create_folder(preprocess_path.joinpath(data_set_str, args.test_session))
+        create_folder(preprocess_path.joinpath(data_set_str, test_fold))
 
         aug = '_aug'if int(args.aug) == 1 else ''
-        f = open(str(preprocess_path.joinpath(data_set_str, args.test_session, 'training_'+str(win_len)+'_'+args.norm+aug+'.pkl')), "wb")
+        f = open(str(preprocess_path.joinpath(data_set_str, test_fold, 'training_'+str(win_len)+'_'+args.norm+aug+'.pkl')), "wb")
         pickle.dump(training_dict, f)
         f.close()
 
-        f = open(str(preprocess_path.joinpath(data_set_str, args.test_session, 'validation_'+str(win_len)+'_'+args.norm+aug+'.pkl')), "wb")
+        f = open(str(preprocess_path.joinpath(data_set_str, test_fold, 'validation_'+str(win_len)+'_'+args.norm+aug+'.pkl')), "wb")
         pickle.dump(valid_dict, f)
         f.close()
 
-        f = open(str(preprocess_path.joinpath(data_set_str, args.test_session, 'test_'+str(win_len)+'_'+args.norm+aug+'.pkl')), "wb")
+        f = open(str(preprocess_path.joinpath(data_set_str, test_fold, 'test_'+str(win_len)+'_'+args.norm+aug+'.pkl')), "wb")
         pickle.dump(test_dict, f)
         f.close()
         

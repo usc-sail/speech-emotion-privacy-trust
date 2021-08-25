@@ -151,8 +151,8 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
     emotion_loss_list, gender_loss_list = [], []
 
     predict_list, truth_list = [], []
-    predict_emotion_list, predict_gender_list = []
-    truth_emotion_list, truth_gender_list = []
+    predict_emotion_list, predict_gender_list = [], []
+    truth_emotion_list, truth_gender_list = [], []
     
 
     for batch_idx, sampled_batch in enumerate(data_loader):
@@ -212,6 +212,7 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
     if args.optimizer == 'adam':
         if mode == 'validate':
             scheduler.step(total_loss)
+            print('validate loss step')
     else:
         scheduler.step()
 
@@ -287,8 +288,8 @@ if __name__ == '__main__':
     parser.add_argument('--input_channel', default=1)
     parser.add_argument('--input_spec_size', default=128)
     parser.add_argument('--cnn_filter_size', type=int, default=32)
-    parser.add_argument('-num_emo_classes', action="store_true", default=4)
-    parser.add_argument('-num_gender_class', action="store_true", default=2)
+    parser.add_argument('--num_emo_classes', default=4)
+    parser.add_argument('--num_gender_class', default=2)
     parser.add_argument('--batch_size', default=30)
     parser.add_argument('--aug', default=0)
     parser.add_argument('--use_gpu', default=True)
@@ -370,7 +371,6 @@ if __name__ == '__main__':
             cmd_str += ' --test_arr '
             for test_idx in test_array[i]:
                 cmd_str += str(test_idx) + ' '
-            
             if int(args.validate) == 1:
                 cmd_str += ' --validation_arr '
                 for validate_idx in validate_array[i]:
@@ -380,6 +380,8 @@ if __name__ == '__main__':
     
     # we want to do 5 validation
     save_result_df = pd.DataFrame()
+    aug = '_aug'if int(args.aug) == 1 else ''
+    
     for config_type in model_parameters_dict:
         
         feature_len = model_parameters_dict[config_type]['feature_len']
@@ -390,93 +392,55 @@ if __name__ == '__main__':
         for i in range(5):
             torch.cuda.empty_cache()
 
-            if data_set_str == 'meld' and i != 0:
-                continue
             if data_set_str == 'msp-podcast' and i != 0:
                 continue
 
-            # initialize the early_stopping object
-            early_stopping = EarlyStopping(patience=10, verbose=True)
-
-            if data_set_str == 'iemocap':
-                save_row_str = 'Session' + str(int(i+1))
-            elif data_set_str == 'crema-d':
-                save_row_str = 'test_id' + str(int(i))
-            elif data_set_str == 'meld' or data_set_str == 'msp-podcast':
-                save_row_str = 'test_id1'
-            elif data_set_str == 'msp-improv':
-                save_row_str = 'session' + str(int(i+1))
-
+            save_row_str = 'fold'+str(int(i+1))
             row_df = pd.DataFrame(index=[save_row_str])
 
             test_session = 'Session' + str(int(i)+1)
-            if int(args.aug) == 1:
-                with open(preprocess_path.joinpath(data_set_str, test_session, 'training_'+str(win_len)+'_'+args.norm+'_aug.pkl'), 'rb') as f:
-                    train_dict = pickle.load(f)
-                with open(preprocess_path.joinpath(data_set_str, test_session, 'validation_'+str(win_len)+'_'+args.norm+'_aug.pkl'), 'rb') as f:
-                    validate_dict = pickle.load(f)
-                with open(preprocess_path.joinpath(data_set_str, test_session, 'test_'+str(win_len)+'_'+args.norm+'_aug.pkl'), 'rb') as f:
-                    test_dict = pickle.load(f)
-            else:
-                with open(preprocess_path.joinpath(data_set_str, test_session, 'training_'+str(win_len)+'_'+args.norm+'.pkl'), 'rb') as f:
-                    train_dict = pickle.load(f)
-                with open(preprocess_path.joinpath(data_set_str, test_session, 'validation_'+str(win_len)+'_'+args.norm+'.pkl'), 'rb') as f:
-                    validate_dict = pickle.load(f)
-                with open(preprocess_path.joinpath(data_set_str, test_session, 'test_'+str(win_len)+'_'+args.norm+'.pkl'), 'rb') as f:
-                    test_dict = pickle.load(f)
+            with open(preprocess_path.joinpath(data_set_str, test_session, 'training_'+str(win_len)+'_'+args.norm+aug+'.pkl'), 'rb') as f:
+                train_dict = pickle.load(f)
+            with open(preprocess_path.joinpath(data_set_str, test_session, 'validation_'+str(win_len)+'_'+args.norm+aug+'.pkl'), 'rb') as f:
+                validate_dict = pickle.load(f)
+            with open(preprocess_path.joinpath(data_set_str, test_session, 'test_'+str(win_len)+'_'+args.norm+aug+'.pkl'), 'rb') as f:
+                test_dict = pickle.load(f)
             
             # Data loaders
             dataset_train = SpeechDataGenerator(train_dict, list(train_dict.keys()), mode='train', input_channel=int(args.input_channel))
             dataloader_train = DataLoader(dataset_train, worker_init_fn=seed_worker, batch_size=args.batch_size, num_workers=0, shuffle=True, collate_fn=speech_collate)
             
-            # if data_set_str == 'msp-podcast' and i != 0:
-            # dataset_val = SpeechDataGenerator(validate_dict, list(validate_dict), mode='validation', input_channel=int(args.input_channel))
-            # dataloader_val = DataLoader(dataset_val, worker_init_fn=seed_worker, batch_size=args.batch_size, num_workers=0, shuffle=True, collate_fn=speech_collate)
+            if int(args.validate) == 1:
+                dataset_val = SpeechDataGenerator(validate_dict, list(validate_dict), mode='validation', input_channel=int(args.input_channel))
+                dataloader_val = DataLoader(dataset_val, worker_init_fn=seed_worker, batch_size=args.batch_size, num_workers=0, shuffle=True, collate_fn=speech_collate)
 
             dataset_test = SpeechDataGenerator(test_dict, list(test_dict), input_channel=int(args.input_channel))
             dataloader_test = DataLoader(dataset_test, batch_size=1, num_workers=0, shuffle=False, collate_fn=speech_collate)
 
             # Model related
-            if args.use_gpu:
-                use_cuda = torch.cuda.is_available()
-                device = torch.device("cuda" if use_cuda else "cpu")
-                
-                print(use_cuda)
-                if use_cuda:
-                    print('GPU available, use GPU')
-            else:
-                device = 'cpu'
+            device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available(): print('GPU available, use GPU')
 
-            if args.model_type == 'cnn-att':
-                model = cnn_att(int(args.input_channel), args.cnn_filter_size, pred='emotion', input_spec_size=feature_len, attention_size=att_size)
-            elif args.model_type == 'cnn-lstm-att':
-                model = cnn_lstm_att(input_channel=int(args.input_channel), input_spec_size=feature_len, cnn_filter_size=filter_size, pred=args.pred,
-                                     lstm_hidden_size=hidden_size, num_layers_lstm=2, attention_size=att_size, global_feature=int(args.global_feature))
-                # model = acrnn(input_channel=int(args.input_channel), input_spec_size=feature_len, cnn_filter_size=filter_size, 
-                #               lstm_hidden_size=hidden_size, num_layers_lstm=2, attention_size=att_size, window_len=win_len, global_feature=int(args.global_feature))
-            elif args.model_type == 'cnn-lstm':
-                model = cnn_lstm(input_channel=int(args.input_channel), input_spec_size=feature_len, cnn_filter_size=filter_size, 
-                                 lstm_hidden_size=hidden_size, num_layers_lstm=2)
-            elif args.model_type == '1d-cnn-lstm-att':
-                model = one_d_cnn_lstm_att(input_channel=int(args.input_channel), input_spec_size=feature_len, cnn_filter_size=filter_size, pred=args.pred,
-                                           lstm_hidden_size=hidden_size, num_layers_lstm=2, attention_size=att_size, global_feature=int(args.global_feature))
-            elif args.model_type == '1d-cnn-global-att':
-                model = one_d_cnn_lstm_global_att(input_channel=int(args.input_channel), input_spec_size=feature_len, cnn_filter_size=filter_size, 
-                                                  lstm_hidden_size=hidden_size, num_layers_lstm=2, attention_size=att_size, global_feature=int(args.global_feature))
-            elif args.model_type == 'cnn-lstm-seq-att':
-                model = one_d_cnn_lstm_seq_att(input_channel=int(args.input_channel), input_spec_size=feature_len, cnn_filter_size=filter_size, pred=args.pred,
-                                               lstm_hidden_size=hidden_size, num_layers_lstm=2, attention_size=att_size, global_feature=int(args.global_feature))
-
+            if args.model_type == '1d-cnn-lstm-att':
+                model = one_d_cnn_lstm_att(input_channel=int(args.input_channel), 
+                                           input_spec_size=feature_len, 
+                                           cnn_filter_size=filter_size, 
+                                           pred=args.pred,
+                                           lstm_hidden_size=hidden_size, 
+                                           num_layers_lstm=2, 
+                                           attention_size=att_size, 
+                                           global_feature=int(args.global_feature))
             model = model.to(device)
-            loss = nn.CrossEntropyLoss()
+            loss = nn.CrossEntropyLoss().to(device)
             
-            # optimizer = optim.Adam(model.parameters(), lr=0.005, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
-            # scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.5, verbose=True)
-            # optimizer = torch.optim.RMSprop(model.parameters(), lr=0.001, momentum=0.9, weight_decay=1e-4)
-
+            # initialize the early_stopping object
+            early_stopping = EarlyStopping(patience=10, verbose=True)
             if args.optimizer == 'sgd':
                 optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=1e-4)
                 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5) 
+            elif args.optimizer == 'adam':
+                optimizer = optim.Adam(model.parameters(), lr=0.005, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
+                scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.5, verbose=True)
 
             model_parameters = filter(lambda p: p.requires_grad, model.parameters())
             params = sum([np.prod(p.size()) for p in model_parameters])
@@ -486,19 +450,23 @@ if __name__ == '__main__':
             best_val_acc, final_acc = 0, 0
             result_dict = {}
             for epoch in range(args.num_epochs):
+                
+                # perform the training, validate, and test
                 train_result = train(model, device, dataloader_train, optimizer, loss, epoch, args, mode='training', pred=args.pred)
-                # pdb.set_trace()
-                # validate_result = train(model, device, dataloader_val, optimizer, loss, epoch, mode='validate', pred=args.pred)
+                if int(args.validate) == 1:
+                    validate_result = train(model, device, dataloader_val, optimizer, loss, epoch, args, mode='validate', pred=args.pred)
                 test_result = test(model, device, dataloader_test, optimizer, loss, epoch, args, pred=args.pred)
                 
+                # save the results for later
                 result_dict[epoch] = {}
                 result_dict[epoch]['train'] = train_result
                 result_dict[epoch]['test'] = test_result
-                # result_dict[epoch]['validate'] = validate_result
+                if int(args.validate) == 1:
+                    result_dict[epoch]['validate'] = validate_result
                 
                 if args.pred == 'multitask':
-                    if test_result['acc']['emotion'] > best_val_acc:
-                        best_val_acc = test_result['acc']['emotion']
+                    if validate_result['acc']['emotion'] > best_val_acc:
+                        best_val_acc = validate_result['acc']['emotion']
                     final_emotion_acc = test_result['acc']['emotion']
                     final_emotion_recall = test_result['rec']['emotion']
                     final_emotion_confusion = test_result['conf']['emotion']
@@ -542,16 +510,9 @@ if __name__ == '__main__':
                 #    break
             
             save_result_df = pd.concat([save_result_df, row_df])
-            if int(args.global_feature) == 1:
-                save_global_feature = 'with_global'
-            else:
-                save_global_feature = 'without_global'
-
-            if int(args.aug) == 1:
-                save_aug = 'with_aug_'+str(win_len)+'_'+args.norm
-            else:
-                save_aug = 'without_aug_'+str(win_len)+'_'+args.norm
-
+            save_global_feature = 'with_global' if int(args.global_feature) == 1 else 'without_global'
+            save_aug = 'with_aug_'+str(win_len)+'_'+args.norm if int(args.aug) == 1 else 'without_aug_'+str(win_len)+'_'+args.norm
+            
             model_result_path = Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), 'hidden_'+str(hidden_size), 'filter_'+str(filter_size), 'att_'+str(att_size), args.pred, save_row_str) 
             create_folder(Path.cwd().parents[0].joinpath('model_result_shift'))
             create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature))
