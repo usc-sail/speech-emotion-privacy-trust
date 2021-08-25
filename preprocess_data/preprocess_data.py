@@ -59,13 +59,11 @@ def save_data_dict(save_data, test_session, validation_session, data_stats_dict,
             data_stats_dict['test'][label] += 1
             test_dict[sentence_file+'_'+str(i)] = {}
             write_data_dict(test_dict[sentence_file+'_'+str(i)], save_data, label, gender, speaker_id, padding)
-            print('save test data %s ' % sentence_file)
             break
         elif speaker_id in validation_session:
             data_stats_dict['valid'][label] += 1
             valid_dict[sentence_file+'_'+str(i)] = {}
             write_data_dict(valid_dict[sentence_file+'_'+str(i)], save_data[i*shift_len:i*shift_len+win_len], label, gender, speaker_id, padding)
-            print('save validation data %s ' % sentence_file)
         else:
             train_label_list.append(label)
             train_data_len_list.append(len(save_data)/100)
@@ -73,7 +71,6 @@ def save_data_dict(save_data, test_session, validation_session, data_stats_dict,
             data_stats_dict['training'][label] += 1
             training_dict[sentence_file+'_'+str(i)] = {}
             write_data_dict(training_dict[sentence_file+'_'+str(i)], save_data[i*shift_len:i*shift_len+win_len], label, gender, speaker_id, padding)
-            print('save training data %s ' % sentence_file)
             
     training_global_norm_dict[speaker_id].append(global_data)
 
@@ -100,7 +97,7 @@ if __name__ == '__main__':
     test_session = args.test_session
     shift = 'shift' if int(args.shift) == 1 else 'without_shift'
     
-    win_len, shift_len = int(args.win_len), int(int(args.win_len)/2)
+    win_len, shift_len = int(args.win_len), int(int(args.win_len)/4)
     feature_len, feature_type = int(args.feature_len), args.feature_type
     
     train_arr, test_arr, validation_arr = args.train_arr, args.test_arr, args.test_arr
@@ -339,7 +336,7 @@ if __name__ == '__main__':
                                     gender = sentence_file.split('_')[0][-1]
                                     speaker_id = sentence_file.split('_')[0]
                                     
-                                    print(speaker_id, gender, label)
+                                    # print(speaker_id, gender, label)
                                     save_data_dict(save_data, test_speaker_id_arr, validation_speaker_id_arr, data_stats_dict, label, gender, speaker_id)
         
         speaker_norm_dict, speaker_global_norm_dict = {}, {}
@@ -410,7 +407,7 @@ if __name__ == '__main__':
         create_folder(preprocess_path.joinpath(data_set_str))
         create_folder(preprocess_path.joinpath(data_set_str, args.test_session))
 
-        aug = '_aug'if int(args.aug) == 1 else 0
+        aug = '_aug'if int(args.aug) == 1 else ''
         f = open(str(preprocess_path.joinpath(data_set_str, args.test_session, 'training_'+str(win_len)+'_'+args.norm+aug+'.pkl')), "wb")
         pickle.dump(training_dict, f)
         f.close()
