@@ -14,7 +14,7 @@ import opensmile
 
 def mfcc(audio):
 
-    audio_transform = torchaudio.transforms.MFCC(sample_rate=44100, n_mfcc=40)
+    audio_transform = torchaudio.transforms.MFCC(sample_rate=16000, n_mfcc=40)
     mfcc = audio_transform(audio).detach()
 
     der1 = np.expand_dims(np.gradient(audio[0]), axis=0)
@@ -68,93 +68,109 @@ if __name__ == '__main__':
     create_folder(root_path.joinpath('feature', feature_type))
     save_feat_path = root_path.joinpath('feature', feature_type)
     
-    feat_len_list = []
     audio_features = {}
 
     smile = opensmile.Smile(feature_set=opensmile.FeatureSet.eGeMAPSv02,
                             feature_level=opensmile.FeatureLevel.Functionals)
 
-    for data_set_str in [args.dataset]:
-        # msp-podcast
-        if data_set_str == 'msp-podcast':
-            # data root folder
-            data_root_path = Path('/media/data').joinpath('sail-data')
-            data_str = 'MSP-podcast'
-            label_df = pd.read_csv(data_root_path.joinpath(data_str, 'Labels', 'labels_concensus.csv'), index_col=0)
+    # msp-podcast
+    if args.dataset == 'msp-podcast':
+        # data root folder
+        data_root_path = Path('/media/data').joinpath('sail-data')
+        data_str = 'MSP-podcast'
+        label_df = pd.read_csv(data_root_path.joinpath(data_str, 'Labels', 'labels_concensus.csv'), index_col=0)
+        
+        audio_features['train'] = {}
+        audio_features['validate'] = {}
+        audio_features['test'] = {}
+
+        for file_name in list(label_df.index):
+            file_path = data_root_path.joinpath(data_str, 'Audios', file_name)
+            if Path.exists(file_path) is False:
+                continue
+
+            emotion = label_df.loc[file_name, 'EmoClass']
+            speaker_id = label_df.loc[file_name, 'SpkrID']
+            gender = label_df.loc[file_name, 'Gender']
+
+            if 'Train' in label_df.loc[file_name, 'Split_Set']:
+                data_type = 'train'
+            elif 'Test1' in label_df.loc[file_name, 'Split_Set']:
+                data_type = 'test'
+            elif 'Validation' in label_df.loc[file_name, 'Split_Set']:
+                data_type = 'validate'
+
+            if 'Test2' in label_df.loc[file_name, 'Split_Set']:
+                print("Skip %s %s" % (data_type, file_name))
+                continue
+
+            if 'Unknown' in speaker_id or 'Unknown' in gender:
+                print("Skip %s %s" % (data_type, file_name))
+                continue
+
+            if emotion == 'N' or emotion == 'S' or emotion == 'H' or emotion == 'A':
+                
+                audio_features[file_name][file_path] = {}
+                audio_features[file_name][file_path]['mfcc'] = mfcc(audio)
+                audio_features[file_name][file_path]['mel1'] = mel_spectrogram(audio, n_fft=800, feature_len=feature_len)
+                audio_features[file_name][file_path]['mel2'] = mel_spectrogram(audio, n_fft=1600, feature_len=feature_len)
+                audio_features[file_name][file_path]['gemaps'] = np.array(smile.process_file(str(file_path)))
+                audio_features[file_name][file_name]['gender'] = gender
+                audio_features[file_name][file_name]['speaker_id'] = speaker_id
+                audio_features[file_name][file_name]['emotion'] = emotion
+
+    # msp-improv
+    elif args.dataset == 'msp-improv':
+        # data root folder
+        data_root_path = Path('/media/data').joinpath('sail-data')
+        session_list = [x.parts[-1] for x in data_root_path.joinpath('MSP-IMPROV', 'MSP-IMPROV', 'Audio').iterdir() if 'session' in x.parts[-1]]
+        session_list.sort()
+        
+        for session_id in session_list:
+            file_path_list = list(data_root_path.joinpath('MSP-IMPROV', 'MSP-IMPROV', 'Audio', session_id).glob('**/**/*.wav'))
+            for file_path in tqdm(file_path_list, ncols=50, miniters=100):
+                file_name = file_path.parts[-1].split('.wav')[0].split('/')[-1]
+                print("process %s %s" % (session_id, file_name))
+
+                audio, sample_rate = torchaudio.load(str(file_path))
+
+                audio_features[file_name] = {}
+                audio_features[file_name]['mfcc'] = mfcc(audio)
+                audio_features[file_name]['mel1'] = mel_spectrogram(audio, n_fft=800, feature_len=feature_len)
+                audio_features[file_name]['mel2'] = mel_spectrogram(audio, n_fft=1600, feature_len=feature_len)
+                audio_features[file_name]['gemaps'] = np.array(smile.process_file(str(file_path)))
+                audio_features[file_name]['session'] = session_id
+                
+    # crema-d
+    elif args.dataset == 'crema-d':
+        # data root folder
+        data_root_path = Path('/media/data').joinpath('public-data')
+        file_list = [x for x in data_root_path.joinpath(args.dataset).iterdir() if '.wav' in x.parts[-1]]
+        file_list.sort()
+
+        for file_path in tqdm(file_list, ncols=100, miniters=100):
+            print('process %s' % file_path)
+            if '1076_MTI_SAD_XX.wav' in str(file_path):
+                continue
+            file_name = file_path.parts[-1].split('.wav')[0]
+            audio, sample_rate = torchaudio.load(str(file_path))
+
+            audio_features[file_name] = {}
+            audio_features[file_name]['mfcc'] = mfcc(audio)
+            audio_features[file_name]['mel1'] = mel_spectrogram(audio, n_fft=800, feature_len=feature_len)
+            audio_features[file_name]['mel2'] = mel_spectrogram(audio, n_fft=1600, feature_len=feature_len)
+            audio_features[file_name]['gemaps'] = np.array(smile.process_file(str(file_path)))
             
-            audio_features['train'] = {}
-            audio_features['validate'] = {}
-            audio_features['test'] = {}
-
-            for file_name in list(label_df.index):
-                file_path = data_root_path.joinpath(data_str, 'Audios', file_name)
-                if Path.exists(file_path) is False:
-                    continue
-
-                emotion = label_df.loc[file_name, 'EmoClass']
-                speaker_id = label_df.loc[file_name, 'SpkrID']
-                gender = label_df.loc[file_name, 'Gender']
-
-                if 'Train' in label_df.loc[file_name, 'Split_Set']:
-                    data_type = 'train'
-                elif 'Test1' in label_df.loc[file_name, 'Split_Set']:
-                    data_type = 'test'
-                elif 'Validation' in label_df.loc[file_name, 'Split_Set']:
-                    data_type = 'validate'
-
-                if 'Test2' in label_df.loc[file_name, 'Split_Set']:
-                    print("Skip %s %s" % (data_type, file_name))
-                    continue
-
-                if 'Unknown' in speaker_id or 'Unknown' in gender:
-                    print("Skip %s %s" % (data_type, file_name))
-                    continue
-
-                if emotion == 'N' or emotion == 'S' or emotion == 'H' or emotion == 'A':
-                    
-                    audio_features[file_name][file_path] = {}
-                    audio_features[file_name][file_path]['mfcc'] = mfcc(audio)
-                    audio_features[file_name][file_path]['mel1'] = mel_spectrogram(audio, n_fft=800, feature_len=feature_len)
-                    audio_features[file_name][file_path]['mel2'] = mel_spectrogram(audio, n_fft=1600, feature_len=feature_len)
-                    audio_features[file_name][file_path]['gemaps'] = np.array(smile.process_file(str(file_path)))
-                    audio_features[file_name][file_name]['gender'] = gender
-                    audio_features[file_name][file_name]['speaker_id'] = speaker_id
-                    audio_features[file_name][file_name]['emotion'] = emotion
-
-        # msp-improv
-        elif data_set_str == 'msp-improv':
-            # data root folder
-            data_root_path = Path('/media/data').joinpath('sail-data')
-            session_list = [x.parts[-1] for x in data_root_path.joinpath('MSP-IMPROV', 'MSP-IMPROV', 'Audio').iterdir() if 'session' in x.parts[-1]]
-            session_list.sort()
-            
-            for session_id in session_list:
-                file_path_list = list(data_root_path.joinpath('MSP-IMPROV', 'MSP-IMPROV', 'Audio', session_id).glob('**/**/*.wav'))
-                for file_path in tqdm(file_path_list, ncols=50, miniters=100):
-                    file_name = file_path.parts[-1].split('.wav')[0].split('/')[-1]
-                    print("process %s %s" % (session_id, file_name))
-
-                    audio, sample_rate = torchaudio.load(str(file_path))
-
-                    audio_features[file_name] = {}
-                    audio_features[file_name]['mfcc'] = mfcc(audio)
-                    audio_features[file_name]['mel1'] = mel_spectrogram(audio, n_fft=800, feature_len=feature_len)
-                    audio_features[file_name]['mel2'] = mel_spectrogram(audio, n_fft=1600, feature_len=feature_len)
-                    audio_features[file_name]['gemaps'] = np.array(smile.process_file(str(file_path)))
-                    audio_features[file_name]['session'] = session_id
-                    
-        # crema-d
-        elif data_set_str == 'crema-d':
-            # data root folder
-            data_root_path = Path('/media/data').joinpath('public-data')
-            file_list = [x for x in data_root_path.joinpath(data_set_str).iterdir() if '.wav' in x.parts[-1]]
-            file_list.sort()
-
+    # iemocap
+    elif args.dataset == 'iemocap':
+        # data root folder
+        data_root_path = Path('/media/data').joinpath('sail-data')
+        session_list = [x.parts[-1] for x in data_root_path.joinpath(args.dataset).iterdir() if  'Session' in x.parts[-1]]
+        session_list.sort()
+        for session_id in session_list:
+            file_path_list = list(data_root_path.joinpath(args.dataset, session_id, 'sentences', 'wav').glob('**/*.wav'))
             for file_path in tqdm(file_path_list, ncols=100, miniters=100):
-                print('process %s' % file_path)
-                if '1076_MTI_SAD_XX.wav' in str(file_path):
-                    continue
-                file_name = file_path.parts[-1].split('.wav')[0]
+                file_name = file_path.parts[-1].split('.wav')[0].split('/')[-1]
                 audio, sample_rate = torchaudio.load(str(file_path))
 
                 audio_features[file_name] = {}
@@ -163,28 +179,10 @@ if __name__ == '__main__':
                 audio_features[file_name]['mel2'] = mel_spectrogram(audio, n_fft=1600, feature_len=feature_len)
                 audio_features[file_name]['gemaps'] = np.array(smile.process_file(str(file_path)))
                 
-        # iemocap
-        elif data_set_str == 'iemocap':
-            # data root folder
-            data_root_path = Path('/media/data').joinpath('sail-data')
-            session_list = [x.parts[-1] for x in data_root_path.joinpath(data_set_str).iterdir() if  'Session' in x.parts[-1]]
-            session_list.sort()
-            for session_id in session_list:
-                file_path_list = list(data_root_path.joinpath(data_set_str, session_id, 'sentences', 'wav').glob('**/*.wav'))
-                for file_path in tqdm(file_path_list, ncols=100, miniters=100):
-                    file_name = file_path.parts[-1].split('.wav')[0].split('/')[-1]
-                    audio, sample_rate = torchaudio.load(str(file_path))
-
-                    audio_features[file_name] = {}
-                    audio_features[file_name]['mfcc'] = mfcc(audio)
-                    audio_features[file_name]['mel1'] = mel_spectrogram(audio, n_fft=800, feature_len=feature_len)
-                    audio_features[file_name]['mel2'] = mel_spectrogram(audio, n_fft=1600, feature_len=feature_len)
-                    audio_features[file_name]['gemaps'] = np.array(smile.process_file(str(file_path)))
-                    
-        create_folder(save_feat_path.joinpath(data_set_str))
-        save_path = str(save_feat_path.joinpath(data_set_str, 'data_'+str(feature_len)+'.pkl'))
-        with open(save_path, 'wb') as handle:
-            pickle.dump(audio_features, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    create_folder(save_feat_path.joinpath(args.dataset))
+    save_path = str(save_feat_path.joinpath(args.dataset, 'data_'+str(feature_len)+'.pkl'))
+    with open(save_path, 'wb') as handle:
+        pickle.dump(audio_features, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
         
             
