@@ -40,7 +40,7 @@ def write_data_dict(tmp_dict, data, label, gender, speaker_id, padding):
 
 def save_data_dict(save_data, test_session, validation_session, data_stats_dict, label, gender, speaker_id):
 
-    if shift == 1:
+    if int(args.shift) == 1:
         padding = True if len(save_data) < win_len else False
         save_len = 1 if len(save_data) < win_len else int((len(save_data) - win_len) / shift_len) + 1
     else:
@@ -65,8 +65,12 @@ def save_data_dict(save_data, test_session, validation_session, data_stats_dict,
             valid_dict[sentence_file+'_'+str(i)] = {}
             write_data_dict(valid_dict[sentence_file+'_'+str(i)], save_data[i*shift_len:i*shift_len+win_len], label, gender, speaker_id, padding)
         else:
-            train_label_list.append(label)
-            train_data_len_list.append(len(save_data)/100)
+            if args.aug is not None:
+                if args.aug == 'emotion':
+                    train_label_list.append(label)
+                else:
+                    train_label_list.append(gender)
+            # train_data_len_list.append(len(save_data)/100)
 
             data_stats_dict['training'][label] += 1
             training_dict[sentence_file+'_'+str(i)] = {}
@@ -83,7 +87,7 @@ if __name__ == '__main__':
     parser.add_argument('--feature_len', default=128)
     parser.add_argument('--feature_type', default='mel_spec')
     parser.add_argument('--test_fold',  default='fold1')
-    parser.add_argument('--aug', default=0, type=int)
+    parser.add_argument('--aug', default=None)
     parser.add_argument('--norm', default='min_max')
     parser.add_argument('--test_id',  default=0)
     parser.add_argument('--shift',  default=1)
@@ -330,6 +334,9 @@ if __name__ == '__main__':
                                 if label == 'ang' or label == 'neu' or label == 'sad' or label == 'hap' or label == 'exc':
                                     if label == 'exc':
                                         label = 'hap'
+                                    
+                                    if 'impro' not in line:
+                                        continue
 
                                     data = data_dict[sentence_file]
                                     global_data = data['gemaps']
@@ -374,12 +381,12 @@ if __name__ == '__main__':
                 global_std_array = speaker_global_norm_dict[speaker_id]['std']                
                 tmp_dict[file_name]['global_data'] = (tmp_dict[file_name]['global_data']  - global_mean_array) / (global_std_array+1e-5)
 
-        if args.aug == 1:
+        if args.aug is not None:
             tmp_list = []
             for label in Counter(train_label_list):
                 tmp_list.append(Counter(train_label_list)[label])
             max_label_size = np.max(tmp_list)
-            
+
             for label in Counter(train_label_list):
                 label_count = Counter(train_label_list)[label]
 
@@ -389,15 +396,19 @@ if __name__ == '__main__':
 
                 aug_key_list = []
                 for key in training_dict:
-                    if training_dict[key]['label'] == label:
-                        aug_key_list.append(key)
+                    if args.aug == 'emotion':
+                        if training_dict[key]['label'] == label:
+                            aug_key_list.append(key)
+                    else:
+                        if training_dict[key]['gender'] == label:
+                            aug_key_list.append(key)
+                        
                 aug_idx_list = np.random.randint(0, len(aug_key_list), size=number_of_aug)
-                
                 for idx, aug_idx in enumerate(aug_idx_list):
                     key = aug_key_list[aug_idx]
                     tmp_data = training_dict[key]['data']
 
-                    noise_to_add = torch.normal(0, 0.01, size=tmp_data.shape).numpy()
+                    noise_to_add = torch.normal(0, 0.05, size=tmp_data.shape).numpy()
                     augmented_audio = tmp_data + noise_to_add
 
                     training_dict[key+'_'+str(idx)] = training_dict[key]
@@ -406,7 +417,11 @@ if __name__ == '__main__':
         create_folder(preprocess_path.joinpath(data_set_str))
         create_folder(preprocess_path.joinpath(data_set_str, test_fold))
 
-        aug = '_aug'if int(args.aug) == 1 else ''
+        if args.aug is None:
+            aug = ''
+        else:
+            aug = '_aug_emotion'if args.aug == 'emotion' else '_aug_gender'
+            
         f = open(str(preprocess_path.joinpath(data_set_str, test_fold, 'training_'+str(win_len)+'_'+args.norm+aug+'.pkl')), "wb")
         pickle.dump(training_dict, f)
         f.close()

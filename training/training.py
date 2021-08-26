@@ -21,7 +21,7 @@ sys.path.append(os.path.join(os.path.abspath(os.path.curdir), '..', 'utils'))
 
 from training_tools import EarlyStopping, SpeechDataGenerator
 from training_tools import speech_collate, setup_seed, seed_worker
-from baseline_models import one_d_cnn_lstm_att
+from baseline_models import one_d_cnn_lstm, two_d_cnn_lstm
 import pdb
 from torch.autograd import Variable
 from sklearn.model_selection import train_test_split, KFold
@@ -291,11 +291,9 @@ if __name__ == '__main__':
     parser.add_argument('--num_emo_classes', default=4)
     parser.add_argument('--num_gender_class', default=2)
     parser.add_argument('--batch_size', default=30)
-    parser.add_argument('--aug', default=0)
+    parser.add_argument('--aug', default=None)
     parser.add_argument('--use_gpu', default=True)
     parser.add_argument('--num_epochs', default=50)
-    parser.add_argument('--alpha', default=0.75)
-    parser.add_argument('--beta', default=0.25)
     parser.add_argument('--model_type', default='cnn-lstm-att')
     parser.add_argument('--pred', default='emotion')
     parser.add_argument('--global_feature', default=0)
@@ -304,11 +302,17 @@ if __name__ == '__main__':
     parser.add_argument('--optimizer', default='sgd')
     parser.add_argument('--validate', default=1)
     parser.add_argument('--shift', default=1)
+    parser.add_argument('--att', default=None)
 
     args = parser.parse_args()
     data_set_str, feature_type = args.dataset, args.feature_type
     shift = 'shift' if int(args.shift) == 1 else 'without_shift'
     win_len = int(args.win_len)
+
+    if args.aug is None:
+        aug = ''
+    else:
+        aug = '_aug_emotion'if args.aug == 'emotion' else '_aug_gender'
     
     setup_seed(8)
     torch.manual_seed(8)
@@ -340,7 +344,9 @@ if __name__ == '__main__':
     for train_index, test_index in kf.split(speaker_id_arr):
         tmp_arr = speaker_id_arr[train_index]
         if int(args.validate) == 1:
-            tmp_train_arr, tmp_validate_arr = train_test_split(tmp_arr, test_size=int(np.round(len(tmp_arr)*0.1)), random_state=8)
+            # tmp_train_arr, tmp_validate_arr = train_test_split(tmp_arr, test_size=int(np.round(len(tmp_arr)*0.1)), random_state=8)
+            tmp_train_arr = tmp_arr[2:]
+            tmp_validate_arr = tmp_arr[:2]
             validate_array.append(tmp_validate_arr)
         train_array.append(tmp_train_arr)
         test_array.append(speaker_id_arr[test_index])
@@ -350,21 +356,20 @@ if __name__ == '__main__':
         if data_set_str == 'msp-podcast' and i != 0:
             continue
 
-        test_session = 'Session' + str(int(i)+1)
+        test_fold = 'fold' + str(int(i)+1)
         preprocess_path = root_path.joinpath('preprocessed_data', shift, feature_type, str(feature_len))
-        
-        aug = '_aug' if int(args.aug) == 1 else ''
-        tmp_path = preprocess_path.joinpath(data_set_str, test_session, 'training_'+str(win_len)+'_'+args.norm+aug+'.pkl')
+        tmp_path = preprocess_path.joinpath(data_set_str, test_fold, 'training_'+str(win_len)+'_'+args.norm+aug+'.pkl')
             
         if os.path.exists(tmp_path) is False:
             cmd_str = 'python3 ../preprocess_data/preprocess_data.py --dataset ' + data_set_str
-            cmd_str += ' --test_session Session' + str(int(i)+1)
-            cmd_str += ' --test_id ' + str(i)
+            cmd_str += ' --test_fold ' + 'fold' + str(i+1)
             cmd_str += ' --feature_type ' + feature_type
             cmd_str += ' --feature_len ' + str(feature_len)
-            cmd_str += ' --aug ' + str(args.aug)
+            if args.aug is not None:
+                cmd_str += ' --aug ' + args.aug
             cmd_str += ' --win_len ' + str(win_len)
             cmd_str += ' --norm ' + args.norm
+            cmd_str += ' --shift ' + args.shift
             cmd_str += ' --train_arr '
             for train_idx in train_array[i]:
                 cmd_str += str(train_idx) + ' '
@@ -380,7 +385,6 @@ if __name__ == '__main__':
     
     # we want to do 5 validation
     save_result_df = pd.DataFrame()
-    aug = '_aug'if int(args.aug) == 1 else ''
     
     for config_type in model_parameters_dict:
         
@@ -398,12 +402,11 @@ if __name__ == '__main__':
             save_row_str = 'fold'+str(int(i+1))
             row_df = pd.DataFrame(index=[save_row_str])
 
-            test_session = 'Session' + str(int(i)+1)
-            with open(preprocess_path.joinpath(data_set_str, test_session, 'training_'+str(win_len)+'_'+args.norm+aug+'.pkl'), 'rb') as f:
+            with open(preprocess_path.joinpath(data_set_str, save_row_str, 'training_'+str(win_len)+'_'+args.norm+aug+'.pkl'), 'rb') as f:
                 train_dict = pickle.load(f)
-            with open(preprocess_path.joinpath(data_set_str, test_session, 'validation_'+str(win_len)+'_'+args.norm+aug+'.pkl'), 'rb') as f:
+            with open(preprocess_path.joinpath(data_set_str, save_row_str, 'validation_'+str(win_len)+'_'+args.norm+aug+'.pkl'), 'rb') as f:
                 validate_dict = pickle.load(f)
-            with open(preprocess_path.joinpath(data_set_str, test_session, 'test_'+str(win_len)+'_'+args.norm+aug+'.pkl'), 'rb') as f:
+            with open(preprocess_path.joinpath(data_set_str, save_row_str, 'test_'+str(win_len)+'_'+args.norm+aug+'.pkl'), 'rb') as f:
                 test_dict = pickle.load(f)
             
             # Data loaders
@@ -422,25 +425,39 @@ if __name__ == '__main__':
             if torch.cuda.is_available(): print('GPU available, use GPU')
 
             if args.model_type == '1d-cnn-lstm-att':
-                model = one_d_cnn_lstm_att(input_channel=int(args.input_channel), 
-                                           input_spec_size=feature_len, 
-                                           cnn_filter_size=filter_size, 
-                                           pred=args.pred,
-                                           lstm_hidden_size=hidden_size, 
-                                           num_layers_lstm=2, 
-                                           attention_size=att_size, 
-                                           global_feature=int(args.global_feature))
+                model = one_d_cnn_lstm(input_channel=int(args.input_channel), 
+                                       input_spec_size=feature_len, 
+                                       cnn_filter_size=filter_size, 
+                                       pred=args.pred,
+                                       lstm_hidden_size=hidden_size, 
+                                       num_layers_lstm=2, 
+                                       attention_size=att_size,
+                                       att=args.att,
+                                       global_feature=int(args.global_feature))
+            else:
+                model = two_d_cnn_lstm(input_channel=int(args.input_channel), 
+                                       input_spec_size=feature_len, 
+                                       cnn_filter_size=filter_size, 
+                                       pred=args.pred,
+                                       lstm_hidden_size=hidden_size, 
+                                       num_layers_lstm=2, 
+                                       attention_size=att_size,
+                                       att=args.att,
+                                       global_feature=int(args.global_feature))
+
             model = model.to(device)
             loss = nn.CrossEntropyLoss().to(device)
             
             # initialize the early_stopping object
             early_stopping = EarlyStopping(patience=10, verbose=True)
+
+            # initialize the optimizer
             if args.optimizer == 'sgd':
-                optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=1e-4)
+                optimizer = torch.optim.SGD(model.parameters(), lr=0.005, momentum=0.9, weight_decay=1e-4)
                 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5) 
             elif args.optimizer == 'adam':
                 optimizer = optim.Adam(model.parameters(), lr=0.005, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
-                scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=10, factor=0.5, verbose=True)
+                scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5, verbose=True)
 
             model_parameters = filter(lambda p: p.requires_grad, model.parameters())
             params = sum([np.prod(p.size()) for p in model_parameters])
@@ -485,19 +502,21 @@ if __name__ == '__main__':
                     print(test_result['conf']['emotion'])
                     print(test_result['conf']['gender'])
                 else:
-                    if test_result['acc'][args.pred] > best_val_acc:
-                        best_val_acc = test_result['acc'][args.pred]
-                    final_acc = test_result['acc'][args.pred]
-                    final_recall = test_result['rec'][args.pred]
-                    # best_epoch = epoch
-                    final_confusion = test_result['conf'][args.pred]
+                    if validate_result['acc'][args.pred] > best_val_acc and epoch > 10:
+                        best_val_acc = validate_result['acc'][args.pred]
+                        best_val_recall = validate_result['rec'][args.pred]
+                        final_acc = test_result['acc'][args.pred]
+                        final_recall = test_result['rec'][args.pred]
+                        final_confusion = test_result['conf'][args.pred]
+                        best_epoch = epoch
 
                     row_df['config'] = 'hidden_'+str(hidden_size) + '_filter_'+str(filter_size) + '_att_'+str(att_size)
-                    row_df['acc'] = test_result['acc'][args.pred]
-                    row_df['rec'] = test_result['rec'][args.pred]
+                    row_df['acc'] = final_acc
+                    row_df['rec'] = final_recall
                     row_df['epoch'] = best_epoch
                     # print(final_acc, best_val_acc, best_epoch)
                     print('best epoch %d, best final acc %.2f, best val acc %.2f' % (best_epoch, final_acc*100, best_val_acc*100))
+                    print('best epoch %d, best final rec %.2f, best val rec %.2f' % (best_epoch, final_recall*100, best_val_recall*100))
                     print('hidden size %d, filter size: %d, att size: %d' % (hidden_size, filter_size, att_size))
                     print(test_result['conf'][args.pred])
 
@@ -511,21 +530,24 @@ if __name__ == '__main__':
             
             save_result_df = pd.concat([save_result_df, row_df])
             save_global_feature = 'with_global' if int(args.global_feature) == 1 else 'without_global'
-            save_aug = 'with_aug_'+str(win_len)+'_'+args.norm if int(args.aug) == 1 else 'without_aug_'+str(win_len)+'_'+args.norm
+            if args.aug is None:
+                save_aug = 'without_aug_'+str(win_len)+'_'+args.norm
+            else:
+                save_aug = 'with_aug_emotion_'+str(win_len)+'_'+args.norm if args.aug == 'emotion' else 'with_aug_gender_'+str(win_len)+'_'+args.norm
+            model_param_str = 'hidden_'+str(hidden_size) + 'filter_'+str(filter_size) + 'att_'+str(att_size) if args.att is not None else 'hidden_'+str(hidden_size) + 'filter_'+str(filter_size)
             
-            model_result_path = Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), 'hidden_'+str(hidden_size), 'filter_'+str(filter_size), 'att_'+str(att_size), args.pred, save_row_str) 
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift'))
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature))
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug))
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type))
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type, feature_type))
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type, feature_type, data_set_str))
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len)))
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), 'hidden_'+str(hidden_size)))
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), 'hidden_'+str(hidden_size), 'filter_'+str(filter_size)))
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), 'hidden_'+str(hidden_size), 'filter_'+str(filter_size), 'att_'+str(att_size)))
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), 'hidden_'+str(hidden_size), 'filter_'+str(filter_size), 'att_'+str(att_size), args.pred))
-            create_folder(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), 'hidden_'+str(hidden_size), 'filter_'+str(filter_size), 'att_'+str(att_size), args.pred, save_row_str))
+            model_result_path = Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), model_param_str, args.pred, save_row_str)
+            
+            create_folder(Path.cwd().parents[0].joinpath('model_result'))
+            create_folder(Path.cwd().parents[0].joinpath('model_result', save_global_feature))
+            create_folder(Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug))
+            create_folder(Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type))
+            create_folder(Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type, feature_type))
+            create_folder(Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type, feature_type, data_set_str))
+            create_folder(Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len)))
+            create_folder(Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), model_param_str))
+            create_folder(Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), model_param_str, args.pred))
+            create_folder(Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), model_param_str, args.pred, save_row_str))
             
             torch.save(model.state_dict(), str(model_result_path.joinpath('model.pt')))
 
@@ -533,7 +555,7 @@ if __name__ == '__main__':
             pickle.dump(result_dict, f)
             f.close()
 
-            save_result_df.to_csv(str(Path.cwd().parents[0].joinpath('model_result_shift', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), 'result_'+str(args.input_spec_size)+'_'+args.pred+'.csv')))
+            save_result_df.to_csv(str(Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), 'result_'+str(args.input_spec_size)+'_'+args.pred+'.csv')))
     
 
 
