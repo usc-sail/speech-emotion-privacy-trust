@@ -163,19 +163,19 @@ class two_d_cnn_lstm(nn.Module):
         self.dropout = nn.Dropout(p=self.dropout_p)
         self.conv = nn.Sequential(
             nn.Conv2d(1, 32, kernel_size=(3, 3), padding=(1, 1)),
-            # nn.BatchNorm2d(32),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
             nn.Dropout2d(self.dropout_p),
             
             nn.Conv2d(32, 48, kernel_size=(3, 3), padding=(1, 1)),
-            # nn.BatchNorm2d(48),
+            nn.BatchNorm2d(48),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
             nn.Dropout2d(self.dropout_p),
             
             nn.Conv2d(48, 64, kernel_size=(3, 3), padding=(1, 1)),
-            # nn.BatchNorm2d(64),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2)),
             nn.Dropout2d(self.dropout_p),

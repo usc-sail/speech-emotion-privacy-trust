@@ -134,8 +134,8 @@ def test(model, device, data_loader, optimizer, loss, epoch, args, pred='emotion
         print('Total test accuracy %.3f / recall %.3f after {%d}' % (acc_score, rec_score, epoch))
         print(confusion_matrix_arr*100)
 
-        tmp_result_dict['acc'][args.pred] = rec_score
-        tmp_result_dict['rec'][args.pred] = acc_score
+        tmp_result_dict['acc'][args.pred] = acc_score
+        tmp_result_dict['rec'][args.pred] = rec_score
         tmp_result_dict['conf'][args.pred] = confusion_matrix_arr
     
     return tmp_result_dict
@@ -268,8 +268,8 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
         confusion_matrix_arr = np.round(confusion_matrix_arr, decimals=4)
         print(confusion_matrix_arr*100)
 
-        tmp_result_dict['acc'][args.pred] = rec_score
-        tmp_result_dict['rec'][args.pred] = acc_score
+        tmp_result_dict['acc'][args.pred] = acc_score
+        tmp_result_dict['rec'][args.pred] = rec_score
         tmp_result_dict['loss'][args.pred] = mean_loss
     
     return tmp_result_dict
@@ -321,7 +321,7 @@ if __name__ == '__main__':
     
     # generate training parameters
     model_parameters_dict = {}
-    hidden_size_list = [128]
+    hidden_size_list = [64]
     filter_size_list = [64]
     att_size_list = [64] if 'global' in args.model_type else [64, 128]
 
@@ -453,10 +453,10 @@ if __name__ == '__main__':
 
             # initialize the optimizer
             if args.optimizer == 'sgd':
-                optimizer = torch.optim.SGD(model.parameters(), lr=0.005, momentum=0.9, weight_decay=1e-4)
+                optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=1e-4)
                 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5) 
             elif args.optimizer == 'adam':
-                optimizer = optim.Adam(model.parameters(), lr=0.005, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
+                optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
                 scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5, verbose=True)
 
             model_parameters = filter(lambda p: p.requires_grad, model.parameters())
@@ -482,8 +482,8 @@ if __name__ == '__main__':
                     result_dict[epoch]['validate'] = validate_result
                 
                 if args.pred == 'multitask':
-                    if validate_result['acc']['emotion'] > best_val_acc:
-                        best_val_acc = validate_result['acc']['emotion']
+                    if validate_result['rec']['emotion'] > best_val_acc:
+                        best_val_acc = validate_result['rec']['emotion']
                     final_emotion_acc = test_result['acc']['emotion']
                     final_emotion_recall = test_result['rec']['emotion']
                     final_emotion_confusion = test_result['conf']['emotion']
@@ -510,6 +510,11 @@ if __name__ == '__main__':
                         final_confusion = test_result['conf'][args.pred]
                         best_epoch = epoch
 
+                        # early_stopping needs the validation loss to check if it has decresed, 
+                        # and if it has, it will make a checkpoint of the current model
+                    if epoch > 10:
+                        early_stopping(validate_result['loss'][args.pred], model)
+
                     row_df['config'] = 'hidden_'+str(hidden_size) + '_filter_'+str(filter_size) + '_att_'+str(att_size)
                     row_df['acc'] = final_acc
                     row_df['rec'] = final_recall
@@ -519,10 +524,6 @@ if __name__ == '__main__':
                     print('best epoch %d, best final rec %.2f, best val rec %.2f' % (best_epoch, final_recall*100, best_val_recall*100))
                     print('hidden size %d, filter size: %d, att size: %d' % (hidden_size, filter_size, att_size))
                     print(test_result['conf'][args.pred])
-
-                    # early_stopping needs the validation loss to check if it has decresed, 
-                    # and if it has, it will make a checkpoint of the current model
-                    early_stopping(validate_result['loss'][args.pred], model)
                 
                 if early_stopping.early_stop and epoch > 10:
                     print("Early stopping")
