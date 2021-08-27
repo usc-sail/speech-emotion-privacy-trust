@@ -277,7 +277,7 @@ if __name__ == '__main__':
             # speaker id for training, validation, and test
             train_speaker_id_arr = [tmp_idx for tmp_idx in train_arr]
             test_speaker_id_arr = [tmp_idx for tmp_idx in test_arr]
-            validation_speaker_id_arr = [speaker_id_arr[tmp_idx] for tmp_idx in validation_arr] if validation_arr is not None else []
+            validation_speaker_id_arr = [tmp_idx for tmp_idx in validation_arr] if validation_arr is not None else []
             
             # data root folder
             data_root_path = Path('/media/data').joinpath('public-data')
@@ -325,7 +325,6 @@ if __name__ == '__main__':
 
                         useful_regex = re.compile(r'\[.+\]\n', re.IGNORECASE)
                         label_lines = re.findall(useful_regex, file_content)
-
                         for line in tqdm(label_lines, ncols=100, miniters=100):
                             if 'Ses' in line:
                                 sentence_file = line.split('\t')[-3]
@@ -341,11 +340,12 @@ if __name__ == '__main__':
                                     data = data_dict[sentence_file]
                                     global_data = data['gemaps']
                                     save_data = np.array(data['mel1'])[0].T if feature_type == 'mel_spec' else np.array(data['mfcc'])[0][:40].T
-                                    gender = sentence_file.split('_')[0][-1]
+                                    gender = sentence_file.split('_')[-1][0]
                                     speaker_id = sentence_file.split('_')[0]
                                     
                                     # print(speaker_id, gender, label)
                                     save_data_dict(save_data, test_speaker_id_arr, validation_speaker_id_arr, data_stats_dict, label, gender, speaker_id)
+        
         speaker_norm_dict, speaker_global_norm_dict = {}, {}
         for speaker_id in training_norm_dict:
             norm_data_list = training_norm_dict[speaker_id]

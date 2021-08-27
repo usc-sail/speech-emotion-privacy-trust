@@ -321,7 +321,7 @@ if __name__ == '__main__':
     
     # generate training parameters
     model_parameters_dict = {}
-    hidden_size_list = [64]
+    hidden_size_list = [128]
     filter_size_list = [64]
     att_size_list = [64] if 'global' in args.model_type else [64, 128]
 
@@ -520,13 +520,13 @@ if __name__ == '__main__':
                     print('hidden size %d, filter size: %d, att size: %d' % (hidden_size, filter_size, att_size))
                     print(test_result['conf'][args.pred])
 
-                # early_stopping needs the validation loss to check if it has decresed, 
-                # and if it has, it will make a checkpoint of the current model
-                # early_stopping(validate_result[2], model)
+                    # early_stopping needs the validation loss to check if it has decresed, 
+                    # and if it has, it will make a checkpoint of the current model
+                    early_stopping(validate_result['loss'][args.pred], model)
                 
-                # if early_stopping.early_stop:
-                #     print("Early stopping")
-                #    break
+                if early_stopping.early_stop and epoch > 10:
+                    print("Early stopping")
+                    break
             
             save_result_df = pd.concat([save_result_df, row_df])
             save_global_feature = 'with_global' if int(args.global_feature) == 1 else 'without_global'
