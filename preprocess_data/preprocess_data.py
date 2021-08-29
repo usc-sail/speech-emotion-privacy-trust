@@ -209,50 +209,17 @@ if __name__ == '__main__':
             # data root folder
             data_root_path = Path('/media/data').joinpath('sail-data')
             data_str = 'MSP-IMPROV'
-            evaluation_path = data_root_path.joinpath(data_str, data_str, 'Evalution.txt')
-            with open(str(evaluation_path)) as f:
-                evaluation_lines = f.readlines()
-
-            cur_evaluation_idx = 0
             
-            high_confident_list = []
-            while cur_evaluation_idx < len(evaluation_lines):
-                # print(cur_evaluation_idx, len(evaluation_lines))
-                if 'UTD-' in evaluation_lines[cur_evaluation_idx]:
-                    cur_name = evaluation_lines[cur_evaluation_idx].split('.avi')[0]
-                    cur_emotion = evaluation_lines[cur_evaluation_idx].split('; ')[1][0]
-                    is_next_emotion = False
-                    num_annotations = 0
-                    num_target_emotion_annotations = 0
-                    while is_next_emotion == False:
-                        cur_evaluation_idx += 1
-                        if cur_evaluation_idx < len(evaluation_lines):
-                            if 'UTD-' in evaluation_lines[cur_evaluation_idx]:
-                                is_next_emotion = True
-                            else:
-                                if ';' in evaluation_lines[cur_evaluation_idx]:
-                                    if cur_emotion == evaluation_lines[cur_evaluation_idx].split(';')[1].strip()[0]:
-                                        num_target_emotion_annotations += 1
-                                    num_annotations += 1
-                        else:
-                            is_next_emotion = True
-                    if num_target_emotion_annotations / num_annotations > 0.75:
-                        high_confident_list.append('MSP-'+cur_name[4:])
-                else:
-                    cur_evaluation_idx += 1
-                
-            for sentence_file in sentence_file_list:
-
+            for sentence_file in tqdm(sentence_file_list, ncols=100, miniters=100):
                 sentence_part = sentence_file.split('-')
-
                 recording_type = sentence_part[-2][-1:]
                 emotion = sentence_part[-4][-1:]
                 gender = sentence_part[-3][:1]
                 speaker_id = sentence_part[-3]
 
+                # we keep improv data only
                 if recording_type == 'P':
                     continue
-
                 if recording_type == 'R':
                     continue
 
@@ -266,9 +233,8 @@ if __name__ == '__main__':
                     label = 'ang'
                 
                 data = data_dict[sentence_file]
-                save_data = np.array(data['feature'])
-                session_id = data['session']
-                global_data = global_data_dict[sentence_file]['feature']
+                save_data = np.array(data['mel1'])[0].T if feature_type == 'mel_spec' else np.array(data['mfcc'])[0][:40].T
+                global_data = data['gemaps']
                 
                 save_data_dict(save_data, test_speaker_id_arr, validation_speaker_id_arr, data_stats_dict, label, gender, speaker_id)
 
@@ -287,7 +253,7 @@ if __name__ == '__main__':
             sentence_file_list.sort()
             speaker_id_arr = np.arange(1001, 1092, 1)
             
-            for sentence_file in sentence_file_list:
+            for sentence_file in tqdm(sentence_file_list, ncols=100, miniters=100):
                 sentence_file = str(sentence_file).split('/')[-1].split('.wav')[0]
                 sentence_part = sentence_file.split('_')
                 
@@ -301,9 +267,7 @@ if __name__ == '__main__':
                     global_data = data['gemaps']
                     save_data = np.array(data['mel1'])[0].T if feature_type == 'mel_spec' else np.array(data['mfcc'])[0][:40].T
                     gender = sentence_file.split('_')[0][-1]
-                    speaker_id = sentence_file.split('_')[0]
-                    
-                    print(speaker_id, gender, label)
+                    speaker_id = int(sentence_file.split('_')[0])
                     save_data_dict(save_data, test_speaker_id_arr, validation_speaker_id_arr, data_stats_dict, label, gender, speaker_id)
 
         elif data_set_str == 'iemocap':
