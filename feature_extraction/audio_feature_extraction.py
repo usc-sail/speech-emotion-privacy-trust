@@ -41,6 +41,7 @@ def mel_spectrogram(audio, n_fft=1024, feature_len=128):
         hop_length=int(window_hop),
         window_fn=window_fn,
     )
+
     audio_amp_to_db = torchaudio.transforms.AmplitudeToDB()
     return audio_amp_to_db(audio_transform(audio).detach())
 
@@ -133,7 +134,9 @@ if __name__ == '__main__':
                 print("process %s %s" % (session_id, file_name))
 
                 audio, sample_rate = torchaudio.load(str(file_path))
-
+                transform_model = torchaudio.transforms.Resample(sample_rate, 16000)
+                audio = transform_model(audio)
+            
                 audio_features[file_name] = {}
                 audio_features[file_name]['mfcc'] = mfcc(audio)
                 audio_features[file_name]['mel1'] = mel_spectrogram(audio, n_fft=800, feature_len=feature_len)
