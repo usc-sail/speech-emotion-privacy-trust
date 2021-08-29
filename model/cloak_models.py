@@ -16,9 +16,9 @@ from torch.nn.modules import dropout
 import itertools
 
 
-class NoisyActivation(nn.Module):
+class cloak_noise(nn.Module):
     def __init__(self,  given_locs, given_scales, min_scale, max_scale, device):
-        super(NoisyActivation, self).__init__()
+        super(cloak_noise, self).__init__()
         size = given_scales.shape
         self.min_scale = min_scale
         self.max_scale = max_scale
