@@ -321,7 +321,7 @@ if __name__ == '__main__':
     
     # generate training parameters
     model_parameters_dict = {}
-    hidden_size_list = [64]
+    hidden_size_list = [128]
     filter_size_list = [64]
     att_size_list = [64] if 'global' in args.model_type else [64, 128]
 
@@ -457,7 +457,7 @@ if __name__ == '__main__':
                 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5) 
             elif args.optimizer == 'adam':
                 optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
-                scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5, verbose=True)
+                scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.2, verbose=True)
 
             model_parameters = filter(lambda p: p.requires_grad, model.parameters())
             params = sum([np.prod(p.size()) for p in model_parameters])
@@ -509,6 +509,7 @@ if __name__ == '__main__':
                         final_recall = test_result['rec'][args.pred]
                         final_confusion = test_result['conf'][args.pred]
                         best_epoch = epoch
+                        best_model = model.state_dict()
 
                         # early_stopping needs the validation loss to check if it has decresed, 
                         # and if it has, it will make a checkpoint of the current model
@@ -535,7 +536,7 @@ if __name__ == '__main__':
                 save_aug = 'without_aug_'+str(win_len)+'_'+args.norm
             else:
                 save_aug = 'with_aug_emotion_'+str(win_len)+'_'+args.norm if args.aug == 'emotion' else 'with_aug_gender_'+str(win_len)+'_'+args.norm
-            model_param_str = 'hidden_'+str(hidden_size) + 'filter_'+str(filter_size) + 'att_'+str(att_size) if args.att is not None else 'hidden_'+str(hidden_size) + 'filter_'+str(filter_size)
+            model_param_str = 'hidden_'+str(hidden_size) + '_filter_'+str(filter_size) + '_att_'+str(att_size) if args.att is not None else 'hidden_'+str(hidden_size) + '_filter_'+str(filter_size)
             
             model_result_path = Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), model_param_str, args.pred, save_row_str)
             
@@ -550,7 +551,7 @@ if __name__ == '__main__':
             create_folder(Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), model_param_str, args.pred))
             create_folder(Path.cwd().parents[0].joinpath('model_result', save_global_feature, save_aug, args.model_type, feature_type, data_set_str, str(feature_len), model_param_str, args.pred, save_row_str))
             
-            torch.save(model.state_dict(), str(model_result_path.joinpath('model.pt')))
+            torch.save(best_model, str(model_result_path.joinpath('model.pt')))
 
             f = open(str(model_result_path.joinpath('results_'+str(args.input_spec_size)+'.pkl')), "wb")
             pickle.dump(result_dict, f)
