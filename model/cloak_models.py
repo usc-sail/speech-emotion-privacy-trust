@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 @author: Tiantian
+Reference from:
+Mireshghallah, F., Taram, M., Jalali, A., Elthakeb, A.T.T., Tullsen, D. and Esmaeilzadeh, H., 2021, April. 
+Not all features are equal: Discovering essential features for preserving prediction privacy. 
+In Proceedings of the Web Conference 2021 (pp. 669-680).
 """
 from re import T
 import pandas as pd
@@ -11,6 +15,7 @@ import math
 from torch.autograd import Variable
 from torch.nn import functional as F
 import pdb
+from reversal_gradient import GradientReversal
 
 from torch.nn.modules import dropout
 import itertools
@@ -25,7 +30,7 @@ class cloak_noise(nn.Module):
         self.given_locs = given_locs 
         self.given_scales = given_scales
         self.locs = nn.Parameter(torch.Tensor(size).copy_(self.given_locs), requires_grad=True)         
-        self.rhos = nn.Parameter(torch.ones(size)-2, requires_grad=True) #-inf
+        self.rhos = nn.Parameter(torch.ones(size)-5, requires_grad=True) #-inf
         self.device = device
 
         # self.noise = nn.Parameter(torch.Tensor(size).normal_(mean=prior_mus, std=prior_sigmas))
@@ -119,3 +124,103 @@ class two_d_cnn_lstm_syn(nn.Module):
             preds = self.original_model.pred_gender_layer(z)
 
         return preds, noisy
+
+
+class two_d_cnn_lstm_syn_with_grl(nn.Module):
+
+    def __init__(self, original_model, gender_model, noise_model):
+        super(two_d_cnn_lstm_syn_with_grl, self).__init__()
+                                
+        self.intermed = noise_model
+        self.original_model = original_model
+
+        # gender part
+        self.conv = nn.Sequential(GradientReversal(), gender_model.conv)
+        self.rnn = gender_model.rnn
+        self.att_linear1 = gender_model.att_linear1
+        self.att_pool = gender_model.att_pool
+        self.att_linear2 = gender_model.att_linear2
+
+        self.dense1 = gender_model.dense1
+        self.dense_relu1 = gender_model.dense_relu1
+        self.dropout = gender_model.dropout
+        self.pred_gender_layer = gender_model.pred_gender_layer
+
+        for param in self.original_model.parameters():
+            if param.requires_grad:
+                param.requires_grad = False
+
+            if isinstance(param, nn.modules.batchnorm._BatchNorm):
+                param.eval()
+                param.affine = False
+                param.track_running_stats = False
+
+        self.intermed.rhos.reuires_grad = True
+        self.intermed.locs.reuires_grad = True
+
+        self.grl_gender_layer = nn.Linear(128, 2)
+                                 
+    def forward(self, input_var, global_feature=None, mask=None, grl=False):
+        
+        x = input_var.float()
+        x = self.intermed(x) if mask is None else self.intermed(x, mask)
+        
+        noisy = x.detach()
+
+        # emotion part
+        x1 = self.original_model.conv(x.float())
+        x1 = x1.transpose(1, 2).contiguous()
+        x_size = x1.size()
+        x1 = x1.reshape(-1, x_size[1], x_size[2]*x_size[3])
+        x1, h_state = self.original_model.rnn(x1)
+        
+        if self.original_model.att is None:
+            z1 = torch.mean(x1, dim=1)
+        elif self.original_model.att == 'self_att':
+            att1 = self.original_model.att_linear1(x1)
+            att1 = self.original_model.att_pool(att1)
+            att1 = self.original_model.att_linear2(att1)
+            att1 = att1.transpose(1, 2)
+            
+            att1 = torch.softmax(att1, dim=2)
+            z1 = torch.matmul(att1, x1)
+            z1 = torch.mean(z1, dim=1)
+        
+        if global_feature is not None:
+            z1 = torch.cat((z1, global_feature), 1)
+        
+        z1 = self.original_model.dense1(z1)
+        z1 = self.original_model.dense_relu1(z1)
+        z1 = self.original_model.dropout(z1)
+        preds1 = self.original_model.pred_emotion_layer(z1)
+
+        # gender model
+        x2 = self.conv(x.float())
+        x2 = x2.transpose(1, 2).contiguous()
+        x_size = x2.size()
+        x2 = x2.reshape(-1, x_size[1], x_size[2]*x_size[3])
+        x2, h_state = self.rnn(x2)
+        
+        if self.original_model.att is None:
+            z2 = torch.mean(x2, dim=1)
+        elif self.original_model.att == 'self_att':
+            att2 = self.att_linear1(x2)
+            att2 = self.att_pool(att2)
+            att2 = self.att_linear2(att2)
+            att2 = att2.transpose(1, 2)
+            
+            att2 = torch.softmax(att2, dim=2)
+            z2 = torch.matmul(att2, x2)
+            z2 = torch.mean(z2, dim=1)
+        
+        if global_feature is not None:
+            z2 = torch.cat((z2, global_feature), 1)
+        
+        z2 = self.dense1(z2)
+        z2 = self.dense_relu1(z2)
+        z2 = self.dropout(z2)
+        preds2 = self.pred_gender_layer(z1)
+        
+        return preds1, preds2, noisy
+
+        
