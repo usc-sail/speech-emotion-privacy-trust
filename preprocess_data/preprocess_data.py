@@ -53,9 +53,7 @@ def save_data_dict(save_data, test_session, validation_session, data_stats_dict,
         training_global_norm_dict[speaker_id] = []
     
     for i in range(save_len):
-        
-        if speaker_id in test_session:
-            
+        if speaker_id in test_speaker_id_arr:
             data_stats_dict['test'][label] += 1
             test_dict[sentence_file+'_'+str(i)] = {}
             write_data_dict(test_dict[sentence_file+'_'+str(i)], save_data, label, gender, speaker_id, padding)
@@ -64,14 +62,12 @@ def save_data_dict(save_data, test_session, validation_session, data_stats_dict,
             data_stats_dict['valid'][label] += 1
             valid_dict[sentence_file+'_'+str(i)] = {}
             write_data_dict(valid_dict[sentence_file+'_'+str(i)], save_data[i*shift_len:i*shift_len+win_len], label, gender, speaker_id, padding)
-        else:
+        elif speaker_id in train_speaker_id_arr:
             if args.aug is not None:
                 if args.aug == 'emotion':
                     train_label_list.append(label)
                 else:
                     train_label_list.append(gender)
-            # train_data_len_list.append(len(save_data)/100)
-
             data_stats_dict['training'][label] += 1
             training_dict[sentence_file+'_'+str(i)] = {}
             write_data_dict(training_dict[sentence_file+'_'+str(i)], save_data[i*shift_len:i*shift_len+win_len], label, gender, speaker_id, padding)
@@ -108,11 +104,11 @@ if __name__ == '__main__':
     
     # save preprocess file
     root_path = Path('/media/data/projects/speech-privacy')
-    create_folder(root_path.joinpath('preprocessed_data'))
-    create_folder(root_path.joinpath('preprocessed_data', shift))
-    create_folder(root_path.joinpath('preprocessed_data', shift, feature_type))
-    create_folder(root_path.joinpath('preprocessed_data', shift, feature_type, str(feature_len)))
-    preprocess_path = root_path.joinpath('preprocessed_data', shift, feature_type, str(feature_len))
+    create_folder(root_path.joinpath('2022_icassp'))
+    create_folder(root_path.joinpath('2022_icassp', shift))
+    create_folder(root_path.joinpath('2022_icassp', shift, feature_type))
+    create_folder(root_path.joinpath('2022_icassp', shift, feature_type, str(feature_len)))
+    preprocess_path = root_path.joinpath('2022_icassp', shift, feature_type, str(feature_len))
 
     # feature folder
     feature_path = root_path.joinpath('feature', feature_type)
@@ -266,7 +262,8 @@ if __name__ == '__main__':
                     data = data_dict[sentence_file]
                     global_data = data['gemaps']
                     save_data = np.array(data['mel1'])[0].T if feature_type == 'mel_spec' else np.array(data['mfcc'])[0][:40].T
-                    gender = sentence_file.split('_')[0][-1]
+                    session_id = int(sentence_part[0])
+                    gender = 'M' if demo_df.loc[int(session_id), 'Sex'] == 'Male' else 'F'
                     speaker_id = int(sentence_file.split('_')[0])
                     save_data_dict(save_data, test_speaker_id_arr, validation_speaker_id_arr, data_stats_dict, label, gender, speaker_id)
 
