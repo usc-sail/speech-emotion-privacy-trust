@@ -459,6 +459,7 @@ if __name__ == '__main__':
             save_global_feature = 'with_global' if int(args.global_feature) == 1 else 'without_global'
             save_aug = 'aug_'+args.norm+'_'+str(int(args.win_len))+'_'+args.norm
             model_param_str = 'hidden_'+str(hidden_size) + '_filter_'+str(filter_size) + '_att_'+str(att_size) if args.att is not None else 'hidden_'+str(hidden_size) + '_filter_'+str(filter_size)
+            # so if it is trained using adv dataset or service provider dataset
             exp_result_str = 'baseline_result' if int(args.adv) == 0 else 'adv_baseline_result'
             
             model_result_path = Path.cwd().parents[0].joinpath(root_result_str, exp_result_str, save_global_feature, save_aug, args.model_type, args.feature_type, args.dataset, args.input_spec_size, model_param_str, args.pred, save_row_str)
