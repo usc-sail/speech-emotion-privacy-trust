@@ -1,3 +1,5 @@
 *__pycache__*
 *.csv
 2022_icassp_result*
+*preprocess_data.py
+*training_data_preprocess.py
