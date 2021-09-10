@@ -134,8 +134,7 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
         self.intermed = noise_model
         self.original_model = original_model
         self.gender_model = gender_model
-        self.gender_model.conv = nn.Sequential(GradientReversal(), gender_model.conv)
-
+        
         for param in self.original_model.parameters():
             if param.requires_grad:
                 param.requires_grad = False
@@ -145,14 +144,8 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
                 param.affine = False
                 param.track_running_stats = False
         
-        for param in self.gender_model.parameters():
-            if param.requires_grad:
-                param.requires_grad = False
-
-            if isinstance(param, nn.modules.batchnorm._BatchNorm):
-                param.eval()
-                param.affine = False
-                param.track_running_stats = False
+        # gender part
+        self.gender_model.conv = nn.Sequential(GradientReversal(), gender_model.conv)
 
         self.intermed.rhos.reuires_grad = True
         self.intermed.locs.reuires_grad = True
@@ -212,7 +205,7 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
         
         if global_feature is not None:
             z2 = torch.cat((z2, global_feature), 1)
-    
+        
         z2 = self.gender_model.dense1(z2)
         z2 = self.gender_model.dense_relu1(z2)
         z2 = self.gender_model.dropout(z2)
@@ -220,4 +213,3 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
         
         return preds1, preds2, noisy
 
-        
