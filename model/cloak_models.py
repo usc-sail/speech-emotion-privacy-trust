@@ -133,20 +133,19 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
                                 
         self.intermed = noise_model
         self.original_model = original_model
-
-        # gender part
-        self.conv = nn.Sequential(GradientReversal(), gender_model.conv)
-        self.rnn = gender_model.rnn
-        self.att_linear1 = gender_model.att_linear1
-        self.att_pool = gender_model.att_pool
-        self.att_linear2 = gender_model.att_linear2
-
-        self.dense1 = gender_model.dense1
-        self.dense_relu1 = gender_model.dense_relu1
-        self.dropout = gender_model.dropout
-        self.pred_gender_layer = gender_model.pred_gender_layer
+        self.gender_model = gender_model
+        self.gender_model.conv = nn.Sequential(GradientReversal(), gender_model.conv)
 
         for param in self.original_model.parameters():
+            if param.requires_grad:
+                param.requires_grad = False
+
+            if isinstance(param, nn.modules.batchnorm._BatchNorm):
+                param.eval()
+                param.affine = False
+                param.track_running_stats = False
+        
+        for param in self.gender_model.parameters():
             if param.requires_grad:
                 param.requires_grad = False
 
@@ -157,8 +156,6 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
 
         self.intermed.rhos.reuires_grad = True
         self.intermed.locs.reuires_grad = True
-
-        self.grl_gender_layer = nn.Linear(128, 2)
                                  
     def forward(self, input_var, global_feature=None, mask=None, grl=False):
         
@@ -195,18 +192,18 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
         preds1 = self.original_model.pred_emotion_layer(z1)
 
         # gender model
-        x2 = self.conv(x.float())
+        x2 = self.gender_model.conv(x.float())
         x2 = x2.transpose(1, 2).contiguous()
         x_size = x2.size()
         x2 = x2.reshape(-1, x_size[1], x_size[2]*x_size[3])
-        x2, h_state = self.rnn(x2)
+        x2, h_state = self.gender_model.rnn(x2)
         
         if self.original_model.att is None:
             z2 = torch.mean(x2, dim=1)
         elif self.original_model.att == 'self_att':
-            att2 = self.att_linear1(x2)
-            att2 = self.att_pool(att2)
-            att2 = self.att_linear2(att2)
+            att2 = self.gender_model.att_linear1(x2)
+            att2 = self.gender_model.att_pool(att2)
+            att2 = self.gender_model.att_linear2(att2)
             att2 = att2.transpose(1, 2)
             
             att2 = torch.softmax(att2, dim=2)
@@ -215,11 +212,11 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
         
         if global_feature is not None:
             z2 = torch.cat((z2, global_feature), 1)
-        
-        z2 = self.dense1(z2)
-        z2 = self.dense_relu1(z2)
-        z2 = self.dropout(z2)
-        preds2 = self.pred_gender_layer(z2)
+    
+        z2 = self.gender_model.dense1(z2)
+        z2 = self.gender_model.dense_relu1(z2)
+        z2 = self.gender_model.dropout(z2)
+        preds2 = self.gender_model.pred_gender_layer(z2)
         
         return preds1, preds2, noisy
 

@@ -321,26 +321,29 @@ if __name__ == '__main__':
                                                             att=args.att,
                                                             global_feature=int(args.global_feature))
 
-                gender_model = two_d_cnn_lstm(input_channel=int(args.input_channel), 
-                                              input_spec_size=feature_len, 
-                                              cnn_filter_size=filter_size, 
-                                              pred='gender',
-                                              lstm_hidden_size=hidden_size, 
-                                              num_layers_lstm=2, 
-                                              attention_size=att_size,
-                                              att=args.att,
-                                              global_feature=int(args.global_feature))
+                pretrained_gender_model = two_d_cnn_lstm(input_channel=int(args.input_channel), 
+                                                         input_spec_size=feature_len, 
+                                                         cnn_filter_size=filter_size, 
+                                                         pred='gender',
+                                                         lstm_hidden_size=hidden_size, 
+                                                         num_layers_lstm=2, 
+                                                         attention_size=att_size,
+                                                         att=args.att,
+                                                         global_feature=int(args.global_feature))
 
             # map to device
             pre_trained_baseline_model = pre_trained_baseline_model.to(device)
-            gender_model = gender_model.to(device)
+            pretrained_gender_model = pretrained_gender_model.to(device)
 
             # load the pretrained model
             baseline_model_result_path = Path.cwd().parents[0].joinpath(root_result_str, exp_result_str, save_global_feature, save_aug, args.model_type, args.feature_type, args.dataset, args.input_spec_size, model_param_str, args.pred, save_row_str)
             pre_trained_baseline_model.load_state_dict(torch.load(str(baseline_model_result_path.joinpath('model.pt')), map_location=device))
+            
+            gender_model_result_path = Path.cwd().parents[0].joinpath(root_result_str, exp_result_str, save_global_feature, save_aug, args.model_type, args.feature_type, args.dataset, args.input_spec_size, model_param_str, 'gender', save_row_str)
+            pretrained_gender_model.load_state_dict(torch.load(str(gender_model_result_path.joinpath('model.pt')), map_location=device))
 
             # load cloak models
-            cloak_model = two_d_cnn_lstm_syn_with_grl(pre_trained_baseline_model.to(device), gender_model.to(device), noise_model.to(device))
+            cloak_model = two_d_cnn_lstm_syn_with_grl(pre_trained_baseline_model.to(device), pretrained_gender_model.to(device), noise_model.to(device))
             cloak_model = cloak_model.to(device)
             
             if int(args.suppression_ratio) != 0:
