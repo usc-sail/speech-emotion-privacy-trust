@@ -219,7 +219,7 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
         z2 = self.dense1(z2)
         z2 = self.dense_relu1(z2)
         z2 = self.dropout(z2)
-        preds2 = self.pred_gender_layer(z1)
+        preds2 = self.pred_gender_layer(z2)
         
         return preds1, preds2, noisy
 
