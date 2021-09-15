@@ -74,6 +74,9 @@ if __name__ == '__main__':
     smile = opensmile.Smile(feature_set=opensmile.FeatureSet.eGeMAPSv02,
                             feature_level=opensmile.FeatureLevel.Functionals)
 
+    emobase_smile = opensmile.Smile(feature_set=opensmile.FeatureSet.emobase,
+                            feature_level=opensmile.FeatureLevel.Functionals)
+
     # msp-podcast
     if args.dataset == 'msp-podcast':
         # data root folder
@@ -142,6 +145,7 @@ if __name__ == '__main__':
                 audio_features[file_name]['mel1'] = mel_spectrogram(audio, n_fft=800, feature_len=feature_len)
                 audio_features[file_name]['mel2'] = mel_spectrogram(audio, n_fft=1600, feature_len=feature_len)
                 audio_features[file_name]['gemaps'] = np.array(smile.process_file(str(file_path)))
+                audio_features[file_name]['emobase'] = np.array(emobase_smile.process_file(str(file_path)))
                 audio_features[file_name]['session'] = session_id
                 
     # crema-d
@@ -163,6 +167,7 @@ if __name__ == '__main__':
             audio_features[file_name]['mel1'] = mel_spectrogram(audio, n_fft=800, feature_len=feature_len)
             audio_features[file_name]['mel2'] = mel_spectrogram(audio, n_fft=1600, feature_len=feature_len)
             audio_features[file_name]['gemaps'] = np.array(smile.process_file(str(file_path)))
+            audio_features[file_name]['emobase'] = np.array(emobase_smile.process_file(str(file_path)))
             
     # iemocap
     elif args.dataset == 'iemocap':
@@ -181,6 +186,7 @@ if __name__ == '__main__':
                 audio_features[file_name]['mel1'] = mel_spectrogram(audio, n_fft=800, feature_len=feature_len)
                 audio_features[file_name]['mel2'] = mel_spectrogram(audio, n_fft=1600, feature_len=feature_len)
                 audio_features[file_name]['gemaps'] = np.array(smile.process_file(str(file_path)))
+                audio_features[file_name]['emobase'] = np.array(emobase_smile.process_file(str(file_path)))
                 
     create_folder(save_feat_path.joinpath(args.dataset))
     save_path = str(save_feat_path.joinpath(args.dataset, 'data_'+str(feature_len)+'.pkl'))
