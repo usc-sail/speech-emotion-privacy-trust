@@ -30,7 +30,7 @@ class cloak_noise(nn.Module):
         self.given_locs = given_locs 
         self.given_scales = given_scales
         self.locs = nn.Parameter(torch.Tensor(size).copy_(self.given_locs), requires_grad=True)         
-        self.rhos = nn.Parameter(torch.ones(size)-5, requires_grad=True) #-inf
+        self.rhos = nn.Parameter(torch.ones(size)-3, requires_grad=True) #-inf
         self.device = device
 
         # self.noise = nn.Parameter(torch.Tensor(size).normal_(mean=prior_mus, std=prior_sigmas))
@@ -78,7 +78,7 @@ class two_d_cnn_lstm_syn(nn.Module):
         self.intermed.rhos.reuires_grad = True
         self.intermed.locs.reuires_grad = True
                                  
-    def forward(self, input_var, global_feature=None, mask=None):
+    def forward(self, input_var, global_feature=None, mask=None, pooling=None):
         
         x = input_var.float()
         if mask is None:
@@ -93,9 +93,13 @@ class two_d_cnn_lstm_syn(nn.Module):
         x_size = x.size()
         x = x.reshape(-1, x_size[1], x_size[2]*x_size[3])
         x, h_state = self.original_model.rnn(x)
-        
+
         if self.original_model.att is None:
-            z = torch.mean(x, dim=1)
+            if pooling is None:
+                x_size = x.size()
+                z = x.reshape(-1, x_size[1]*x_size[2])
+            else:
+                z = torch.mean(x, dim=1)
         elif self.original_model.att == 'self_att':
             # pdb.set_trace()
             att = self.original_model.att_linear1(x)
@@ -128,7 +132,7 @@ class two_d_cnn_lstm_syn(nn.Module):
 
 class two_d_cnn_lstm_syn_with_grl(nn.Module):
 
-    def __init__(self, original_model, gender_model, noise_model):
+    def __init__(self, original_model, gender_model, noise_model, grl_lambda):
         super(two_d_cnn_lstm_syn_with_grl, self).__init__()
                                 
         self.intermed = noise_model
@@ -145,12 +149,12 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
                 param.track_running_stats = False
         
         # gender part
-        self.gender_model.conv = nn.Sequential(GradientReversal(), gender_model.conv)
+        self.gender_model.conv = nn.Sequential(GradientReversal(grl_lambda), gender_model.conv)
 
         self.intermed.rhos.reuires_grad = True
         self.intermed.locs.reuires_grad = True
                                  
-    def forward(self, input_var, global_feature=None, mask=None, grl=False):
+    def forward(self, input_var, global_feature=None, mask=None, grl=False, pooling=None):
         
         x = input_var.float()
         x = self.intermed(x) if mask is None else self.intermed(x, mask)
@@ -165,7 +169,11 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
         x1, h_state = self.original_model.rnn(x1)
         
         if self.original_model.att is None:
-            z1 = torch.mean(x1, dim=1)
+            if pooling is None:
+                x_size = x1.size()
+                z1 = x1.reshape(-1, x_size[1]*x_size[2])
+            else:
+                z1 = torch.mean(x1, dim=1)
         elif self.original_model.att == 'self_att':
             att1 = self.original_model.att_linear1(x1)
             att1 = self.original_model.att_pool(att1)
@@ -192,7 +200,11 @@ class two_d_cnn_lstm_syn_with_grl(nn.Module):
         x2, h_state = self.gender_model.rnn(x2)
         
         if self.original_model.att is None:
-            z2 = torch.mean(x2, dim=1)
+            if pooling is None:
+                x_size = x2.size()
+                z2 = x2.reshape(-1, x_size[1]*x_size[2])
+            else:
+                z2 = torch.mean(x2, dim=1)
         elif self.original_model.att == 'self_att':
             att2 = self.gender_model.att_linear1(x2)
             att2 = self.gender_model.att_pool(att2)

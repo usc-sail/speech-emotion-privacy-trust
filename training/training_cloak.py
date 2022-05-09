@@ -13,6 +13,7 @@ import pickle
 from pathlib import Path
 import pandas as pd
 import math
+from copy import deepcopy
 
 import sys, os
 sys.path.append(os.path.join(os.path.abspath(os.path.curdir), '..', 'model'))
@@ -20,7 +21,7 @@ sys.path.append(os.path.join(os.path.abspath(os.path.curdir), '..', 'utils'))
 
 from training_tools import EarlyStopping, SpeechDataGenerator, ReturnResultDict
 from training_tools import speech_collate, setup_seed, seed_worker, get_class_weight
-from baseline_models import one_d_cnn_lstm, two_d_cnn_lstm, two_d_cnn
+from baseline_models import one_d_cnn_lstm, two_d_cnn_lstm, two_d_cnn, deep_two_d_cnn_lstm
 from cloak_models import cloak_noise, two_d_cnn_lstm_syn, two_d_cnn_lstm_syn_with_grl
 import pdb
 from torch.autograd import Variable
@@ -42,7 +43,7 @@ def create_folder(folder):
 
 
 def test(cloak_model, device, data_loader, optimizer, loss, epoch, args, pred='emotion', mask=None):
-    model.eval()
+    cloak_model.eval()
     predict_dict, truth_dict = {}, {}
     
     predict_dict[args.dataset] = []
@@ -70,11 +71,9 @@ def test(cloak_model, device, data_loader, optimizer, loss, epoch, args, pred='e
             tmp_features = tmp_features.unsqueeze(dim=0)
             
             labels_arr = labels_emo if pred == 'emotion' else labels_gen
-            if int(args.grl) == 0:
-                preds, noisy = cloak_model(tmp_features, global_feature=global_data, mask=mask) if int(args.global_feature) == 1 else cloak_model(tmp_features, mask=mask)
-            else:
-                preds, preds_grl, noisy = model(tmp_features, global_feature=global_data, mask=mask) if int(args.global_feature) == 1 else model(tmp_features, mask=mask)
-
+            pooling = None if 'deep' in args.model_type else 'mean'
+            preds, noisy = cloak_model(tmp_features, global_feature=global_data, mask=mask, pooling=pooling) if int(args.global_feature) == 1 else cloak_model(tmp_features, mask=mask, pooling=pooling)
+            
             m = nn.Softmax(dim=1)
             preds = m(preds)
             pred_list.append(preds.detach().cpu().numpy()[0])
@@ -106,7 +105,12 @@ def train(cloak_model, device, data_loader, optimizer, loss, epoch, args, mode='
     truth_dict[args.dataset] = []
 
     if args.dataset == 'combine':
-        for tmp_str in ['iemocap', 'crema-d', 'msp-improv']:
+        tmp_list = ['iemocap', 'crema-d', 'msp-improv']
+    elif args.dataset == 'combine_two':
+        tmp_list = ['iemocap', 'crema-d']
+
+    if 'combine' in args.dataset:
+        for tmp_str in tmp_list:
             predict_dict[tmp_str] = []
             truth_dict[tmp_str] = []
     
@@ -118,24 +122,29 @@ def train(cloak_model, device, data_loader, optimizer, loss, epoch, args, mode='
         lengths = torch.from_numpy(np.asarray([torch_tensor.numpy() for torch_tensor in sampled_batch[3]])).squeeze()
         global_data = torch.from_numpy(np.asarray([torch_tensor.numpy() for torch_tensor in sampled_batch[4]]))
         dataset_data = [dataset for dataset in sampled_batch[5]]
+        speaker_id_data = [str(speaker_id) for speaker_id in sampled_batch[7]]
  
         features, labels_emo, labels_gen, lengths, global_data = features.to(device), labels_emo.to(device), labels_gen.to(device), lengths.to(device), global_data.to(device)
         if len(features.shape) == 3: features = features.unsqueeze(dim=1)
         features, labels_emo, labels_gen, lengths, global_data = Variable(features), Variable(labels_emo), Variable(labels_gen), Variable(lengths), Variable(global_data)
         
         labels_arr = labels_emo if pred == 'emotion' else labels_gen
-        preds, noisy = cloak_model(features, global_feature=global_data, mask=mask) if int(args.global_feature) == 1 else cloak_model(features, mask=mask)
-    
+        pooling = None if 'deep' in args.model_type else 'mean'
+        preds, noisy = cloak_model(features, global_feature=global_data, mask=mask, pooling=pooling) if int(args.global_feature) == 1 else cloak_model(features, mask=mask, pooling=pooling)
+        
         # calculate loss
-        if args.dataset == 'combine':
+        if 'combine' in args.dataset:
             total_loss = 0
             for pred_idx in range(len(preds)):
-                total_loss += loss(preds[pred_idx].unsqueeze(dim=0), labels_arr[pred_idx]) * weights[dataset_data[pred_idx]]
+                speaker_id = speaker_id_data[pred_idx]+'_'+dataset_data[pred_idx]
+                if mode == 'training':
+                    total_loss += (loss(preds[pred_idx].unsqueeze(dim=0), labels_arr[pred_idx]) * weights[speaker_id]) / len(preds)
+                else:
+                    total_loss += (loss(preds[pred_idx].unsqueeze(dim=0), labels_arr[pred_idx])) / len(preds)
+            
             if int(args.suppression_ratio) == 0:
                 scale_loss = torch.log(torch.mean(cloak_model.intermed.scales()))
-                total_loss = total_loss / len(preds) - float(args.scale_lamda)*scale_loss
-            else:
-                total_loss = total_loss / len(preds)
+                total_loss = total_loss - float(args.scale_lamda)*scale_loss
         else:
             total_loss = loss(preds, labels_arr[0]) if len(labels_emo) == 1 else loss(preds, labels_arr.squeeze())
             
@@ -165,7 +174,8 @@ def train(cloak_model, device, data_loader, optimizer, loss, epoch, args, mode='
     # if validate mode, step the loss        
     if args.optimizer == 'adam':
         if mode == 'validate':
-            scheduler.step(total_loss)
+            mean_loss = np.mean(train_loss_list)
+            scheduler.step(mean_loss)
             print('validate loss step')
     else:
         scheduler.step()
@@ -189,7 +199,7 @@ if __name__ == '__main__':
     parser.add_argument('--cnn_filter_size', type=int, default=32)
     parser.add_argument('--num_emo_classes', default=4)
     parser.add_argument('--num_gender_class', default=2)
-    parser.add_argument('--batch_size', default=30)
+    parser.add_argument('--batch_size', default=32)
     parser.add_argument('--aug', default=None)
     parser.add_argument('--use_gpu', default=True)
     parser.add_argument('--num_epochs', default=30)
@@ -270,12 +280,13 @@ if __name__ == '__main__':
             with open(preprocess_path.joinpath(args.dataset, save_row_str, 'test_'+str(int(args.win_len))+'_'+args.norm+'_aug_'+args.aug+'.pkl'), 'rb') as f:
                 test_dict = pickle.load(f)
 
-            if args.dataset == 'combine':
+            if 'combine' in args.dataset:
                 weights = {}
-                for tmp_str in ['iemocap', 'crema-d', 'msp-improv']:
-                    weights[tmp_str] = 0
                 for key in train_dict:
-                    weights[train_dict[key]['dataset']] += 1
+                    speaker_id = str(train_dict[key]['speaker_id'])+'_'+train_dict[key]['dataset']
+                    if speaker_id not in weights:
+                        weights[speaker_id] = 0
+                    weights[speaker_id] += 1
                 weights = get_class_weight(weights)
             
             # Data loaders
@@ -289,13 +300,13 @@ if __name__ == '__main__':
             dataloader_test = DataLoader(dataset_test, batch_size=1, num_workers=0, shuffle=False, collate_fn=speech_collate)
 
             # Model related
-            device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
+            device = torch.device("cuda:0") if torch.cuda.is_available() else "cpu"
             if torch.cuda.is_available(): print('GPU available, use GPU')
 
             # noise model
             mus = torch.zeros((1, int(args.win_len), feature_len)).to(device)
             scale = torch.ones((1, int(args.win_len), feature_len)).to(device)
-            noise_model = cloak_noise(mus, scale, torch.tensor(0.01).to(device), torch.tensor(5).to(device), device)
+            noise_model = cloak_noise(mus, scale, torch.tensor(0.01).to(device), torch.tensor(10).to(device), device)
             noise_model = noise_model.to(device)
 
             loss = nn.CrossEntropyLoss().to(device)
@@ -316,6 +327,16 @@ if __name__ == '__main__':
                                   cnn_filter_size=filter_size, 
                                   pred=args.pred,
                                   global_feature=int(args.global_feature))
+            elif args.model_type == 'deep-2d-cnn-lstm':
+                pre_trained_model = deep_two_d_cnn_lstm(input_channel=int(args.input_channel), 
+                                                        input_spec_size=feature_len, 
+                                                        cnn_filter_size=filter_size, 
+                                                        pred=args.pred,
+                                                        lstm_hidden_size=hidden_size, 
+                                                        num_layers_lstm=2, 
+                                                        attention_size=att_size,
+                                                        att=args.att,
+                                                        global_feature=int(args.global_feature))
             else:
                 model = two_d_cnn_lstm(input_channel=int(args.input_channel), 
                                        input_spec_size=feature_len, 
@@ -328,23 +349,27 @@ if __name__ == '__main__':
                                        global_feature=int(args.global_feature))
 
             # load the original models
-            model = model.to(device)
+            pre_trained_model = pre_trained_model.to(device)
+
+            # model_result_path = Path.cwd().parents[0].joinpath(root_result_str, exp_result_str, save_global_feature, save_aug, args.model_type, args.feature_type, args.dataset, args.input_spec_size, model_param_str, args.pred, save_row_str)
+            # pre_trained_model.load_state_dict(torch.load(str(model_result_path.joinpath('model.pt'))))
+
+            baseline_model_result_path = Path.cwd().parents[0].joinpath(root_result_str, exp_result_str, save_global_feature, save_aug, args.model_type, args.feature_type, args.dataset, args.input_spec_size, model_param_str, args.pred, save_row_str)
+            pre_trained_model.load_state_dict(torch.load(str(baseline_model_result_path.joinpath('model.pt')), map_location=device))
+
             # load cloak models
-            cloak_model = two_d_cnn_lstm_syn(model.to(device), noise_model.to(device)) if int(args.grl) == 0 else two_d_cnn_lstm_syn_with_grl(model.to(device), noise_model.to(device))
+            cloak_model = two_d_cnn_lstm_syn(pre_trained_model.to(device), noise_model.to(device))
             cloak_model = cloak_model.to(device)
             
             if int(args.suppression_ratio) != 0:
                 cloak_model_result_path = Path.cwd().parents[0].joinpath(root_result_str, 'cloak_'+exp_result_str, scale_lamda_str, 'suppression_0', save_global_feature, save_aug, args.model_type, args.feature_type, args.dataset, str(feature_len), model_param_str, args.pred, save_row_str)
                 cloak_model.load_state_dict(torch.load(str(cloak_model_result_path.joinpath('model.pt'))))
                 cloak_model.intermed.rhos.requires_grad = False
-                tmp = np.nanpercentile(cloak_model.intermed.scales().detach().cpu().numpy(), int(args.suppression_ratio))
+                tmp = np.nanpercentile(cloak_model.intermed.scales().detach().cpu().numpy(), 100-int(args.suppression_ratio))
                 mask = torch.where(cloak_model.intermed.scales()>tmp, torch.zeros(cloak_model.intermed.scales().shape).to(device), torch.ones(cloak_model.intermed.scales().shape).to(device))
             else:
                 mask = None
-
-            model_result_path = Path.cwd().parents[0].joinpath(root_result_str, exp_result_str, save_global_feature, save_aug, args.model_type, args.feature_type, args.dataset, args.input_spec_size, model_param_str, args.pred, save_row_str)
-            model.load_state_dict(torch.load(str(model_result_path.joinpath('model.pt'))))
-                            
+                
             # initialize the early_stopping object
             early_stopping = EarlyStopping(patience=10, verbose=True)
 
@@ -353,8 +378,8 @@ if __name__ == '__main__':
                 optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, cloak_model.parameters()), lr=0.001, momentum=0.9, weight_decay=1e-4)
                 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5) 
             elif args.optimizer == 'adam':
-                optimizer = optim.Adam(filter(lambda p: p.requires_grad, cloak_model.parameters()), lr=0.001, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
-                scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5, verbose=True)
+                optimizer = optim.Adam(filter(lambda p: p.requires_grad, cloak_model.parameters()), lr=0.0005, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
+                scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.2, verbose=True)
 
             model_parameters = filter(lambda p: p.requires_grad, cloak_model.parameters())
             params = sum([np.prod(p.size()) for p in model_parameters])
@@ -384,12 +409,12 @@ if __name__ == '__main__':
                     final_confusion = test_result[args.dataset]['conf'][args.pred]
                     best_epoch = epoch
                 
-                    best_model = cloak_model.state_dict()
+                    best_model = deepcopy(cloak_model.state_dict())
 
                 # early_stopping needs the validation loss to check if it has decresed, 
                 # and if it has, it will make a checkpoint of the current model
                 if epoch > 10:
-                    early_stopping(validate_result[args.dataset]['loss'][args.pred], model)
+                    early_stopping(validate_result[args.dataset]['loss'][args.pred], pre_trained_model)
 
                 row_df['config'] = 'hidden_'+str(hidden_size) + '_filter_'+str(filter_size) + '_att_'+str(att_size)
                 row_df['acc'] = final_acc

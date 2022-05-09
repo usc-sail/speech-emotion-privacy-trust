@@ -13,6 +13,7 @@ import pickle
 from pathlib import Path
 import pandas as pd
 import math
+from copy import deepcopy
 
 import sys, os
 sys.path.append(os.path.join(os.path.abspath(os.path.curdir), '..', 'model'))
@@ -20,7 +21,7 @@ sys.path.append(os.path.join(os.path.abspath(os.path.curdir), '..', 'utils'))
 
 from training_tools import EarlyStopping, SpeechDataGenerator, ReturnResultDict
 from training_tools import speech_collate, setup_seed, seed_worker, get_class_weight
-from baseline_models import one_d_cnn_lstm, two_d_cnn_lstm
+from baseline_models import one_d_cnn_lstm, two_d_cnn_lstm, deep_two_d_cnn_lstm
 from cloak_models import cloak_noise, two_d_cnn_lstm_syn_with_grl
 import pdb
 from torch.autograd import Variable
@@ -47,7 +48,12 @@ def test(model, device, data_loader, optimizer, loss, epoch, args, pred='emotion
     truth_dict[args.dataset] = []
 
     if args.dataset == 'combine':
-        for tmp_str in ['iemocap', 'crema-d', 'msp-improv']:
+        tmp_list = ['iemocap', 'crema-d', 'msp-improv']
+    elif args.dataset == 'combine_two':
+        tmp_list = ['iemocap', 'crema-d']
+
+    if 'combine' in args.dataset:
+        for tmp_str in tmp_list:
             predict_dict[tmp_str] = []
             truth_dict[tmp_str] = []
     
@@ -70,7 +76,8 @@ def test(model, device, data_loader, optimizer, loss, epoch, args, pred='emotion
             tmp_features = tmp_features.unsqueeze(dim=0)
             
             labels_arr = labels_emo if pred == 'emotion' else labels_gen
-            preds, preds_grl, noisy = model(tmp_features, global_feature=global_data, mask=mask, grl=False) if int(args.global_feature) == 1 else model(tmp_features, mask=mask, grl=False)
+            pooling = None if 'deep' in args.model_type else 'mean'
+            preds, preds_grl, noisy = model(tmp_features, global_feature=global_data, mask=mask, grl=False, pooling=pooling) if int(args.global_feature) == 1 else model(tmp_features, mask=mask, grl=False, pooling=pooling)        
             m = nn.Softmax(dim=1)
 
             preds = m(preds)
@@ -79,7 +86,7 @@ def test(model, device, data_loader, optimizer, loss, epoch, args, pred='emotion
         mean_predictions = np.mean(np.array(pred_list), axis=0)
         prediction = np.argmax(mean_predictions)
 
-        if args.dataset == 'combine':
+        if 'combine' in args.dataset:
             predict_dict[dataset_data[0]].append(prediction)
             truth_dict[dataset_data[0]].append(labels_arr.detach().cpu().numpy()[0][0])
         predict_dict[args.dataset].append(prediction)
@@ -103,7 +110,12 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
     truth_dict[args.dataset] = []
 
     if args.dataset == 'combine':
-        for tmp_str in ['iemocap', 'crema-d', 'msp-improv']:
+        tmp_list = ['iemocap', 'crema-d', 'msp-improv']
+    elif args.dataset == 'combine_two':
+        tmp_list = ['iemocap', 'crema-d']
+
+    if 'combine' in args.dataset:
+        for tmp_str in tmp_list:
             predict_dict[tmp_str] = []
             truth_dict[tmp_str] = []
     
@@ -115,32 +127,39 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
         labels_gen = torch.from_numpy(np.asarray([torch_tensor.numpy() for torch_tensor in sampled_batch[2]]))
         global_data = torch.from_numpy(np.asarray([torch_tensor.numpy() for torch_tensor in sampled_batch[4]]))
         dataset_data = [dataset for dataset in sampled_batch[5]]
+        speaker_id_data = [str(speaker_id) for speaker_id in sampled_batch[7]]
  
         features, labels_emo, labels_gen, global_data = features.to(device), labels_emo.to(device), labels_gen.to(device), global_data.to(device)
         if len(features.shape) == 3: features = features.unsqueeze(dim=1)
         features, labels_emo, labels_gen, global_data = Variable(features), Variable(labels_emo), Variable(labels_gen), Variable(global_data)
         
         labels_arr = labels_emo if pred == 'emotion' else labels_gen
-        preds, preds_grl, noisy = model(features, global_feature=global_data, mask=mask, grl=False) if int(args.global_feature) == 1 else model(features, mask=mask, grl=False)
+        pooling = None if 'deep' in args.model_type else 'mean'
+        preds, preds_grl, noisy = model(features, global_feature=global_data, mask=mask, grl=False, pooling=pooling) if int(args.global_feature) == 1 else model(features, mask=mask, grl=False, pooling=pooling)
 
         # calculate loss
-        if args.dataset == 'combine':
+        if 'combine' in args.dataset:
             total_loss = 0
             for pred_idx in range(len(preds)):
                 # the weights are designed for imbalance number of samples between dataset
                 # the gradient backpropagation from gender model side will be timed by -1
                 # so the gender model can be trained normally but the addition noise will be invarient to gender
-                total_loss += loss(preds[pred_idx].unsqueeze(dim=0), labels_emo[pred_idx]) * weights[dataset_data[pred_idx]]
-                total_loss += loss(preds_grl[pred_idx].unsqueeze(dim=0), labels_gen[pred_idx]) * weights[dataset_data[pred_idx]]
-            
+                speaker_id = speaker_id_data[pred_idx]+'_'+dataset_data[pred_idx]
+
+                if mode == 'training':
+                    total_loss += (loss(preds[pred_idx].unsqueeze(dim=0), labels_arr[pred_idx]) * weights[speaker_id]) / len(preds)
+                    total_loss += (float(args.gender_lambda)*loss(preds_grl[pred_idx].unsqueeze(dim=0), labels_gen[pred_idx]) * weights[speaker_id]) / len(preds)
+                else:
+                    total_loss += (loss(preds[pred_idx].unsqueeze(dim=0), labels_arr[pred_idx])) / len(preds)
+                    total_loss += (float(args.gender_lambda)*loss(preds_grl[pred_idx].unsqueeze(dim=0), labels_gen[pred_idx])) / len(preds)
+
             # if we are training sigma and mu at the same time, we can add the loss to the sigma term
             # otherwise we add the suppression, the sigma is freezed, and only mu will be trained
             if int(args.suppression_ratio) == 0:
                 scale_loss = torch.log(torch.mean(cloak_model.intermed.scales()))
-                total_loss = total_loss / len(preds) - float(args.scale_lamda)*scale_loss
+                total_loss = total_loss - float(args.scale_lamda)*scale_loss
             else:
-                total_loss = total_loss / len(preds)
-            
+                total_loss = total_loss
         train_loss_list.append(total_loss.item())
 
         # back propgation
@@ -151,7 +170,7 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
 
         # get the prediction results
         predictions = np.argmax(preds.detach().cpu().numpy(), axis=1)
-        if args.dataset == 'combine':
+        if 'combine' in args.dataset:
             for pred_idx in range(len(predictions)):
                 predict_dict[dataset_data[pred_idx]].append(predictions[pred_idx])
                 truth_dict[dataset_data[pred_idx]].append(labels_arr.detach().cpu().numpy()[pred_idx][0])
@@ -164,9 +183,10 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
             print('Loss {} after {} iteration'.format(np.mean(np.asarray(train_loss_list)), batch_idx))
         
     # if validate mode, step the loss
-    if mode == 'validate':      
+    if mode == 'validate':
+        mean_loss = np.mean(train_loss_list)
         if args.optimizer == 'adam':
-            scheduler.step(total_loss)
+            scheduler.step(mean_loss)
         else:
             scheduler.step()
 
@@ -189,7 +209,7 @@ if __name__ == '__main__':
     parser.add_argument('--cnn_filter_size', type=int, default=32)
     parser.add_argument('--num_emo_classes', default=4)
     parser.add_argument('--num_gender_class', default=2)
-    parser.add_argument('--batch_size', default=30)
+    parser.add_argument('--batch_size', default=32)
     parser.add_argument('--aug', default=None)
     parser.add_argument('--use_gpu', default=True)
     parser.add_argument('--num_epochs', default=30)
@@ -204,7 +224,9 @@ if __name__ == '__main__':
     parser.add_argument('--adv', default=0)
     parser.add_argument('--suppression_ratio', default=0)
     parser.add_argument('--scale_lamda', default=0)
-
+    parser.add_argument('--grl_lambda', default=0.1)
+    parser.add_argument('--gender_lambda', default=0.1)
+    
     args = parser.parse_args()
     shift = 'shift' if int(args.shift) == 1 else 'without_shift'
     
@@ -241,7 +263,7 @@ if __name__ == '__main__':
         filter_size = model_parameters_dict[config_type]['filter']
         att_size = model_parameters_dict[config_type]['att_size']
         
-        for i in range(5):
+        for i in range(0, 5):
             torch.cuda.empty_cache()
 
             save_row_str = 'fold'+str(int(i+1))
@@ -252,7 +274,10 @@ if __name__ == '__main__':
             model_param_str = 'hidden_'+str(hidden_size) + '_filter_'+str(filter_size) + '_att_'+str(att_size) if args.att is not None else 'hidden_'+str(hidden_size) + '_filter_'+str(filter_size)
             suppression_str = 'suppression_' + str(args.suppression_ratio)
             root_result_str = '2022_icassp_result'
-            scale_lamda_str = 'lamda_'+str(args.scale_lamda)
+            if float(args.gender_lambda) == 0.1:
+                scale_lamda_str = 'lamda_'+str(args.scale_lamda)+'_grl_'+str(args.grl_lambda)
+            else:
+                scale_lamda_str = 'lamda_'+str(args.scale_lamda)+'_grl_'+str(args.grl_lambda)+'_gender_'+str(args.gender_lambda)
             
             # we are training baseline models
             if int(args.adv) == 0:
@@ -268,12 +293,23 @@ if __name__ == '__main__':
             with open(preprocess_path.joinpath(args.dataset, save_row_str, 'test_'+str(int(args.win_len))+'_'+args.norm+'_aug_'+args.aug+'.pkl'), 'rb') as f:
                 test_dict = pickle.load(f)
 
+            '''
             if args.dataset == 'combine':
                 weights = {}
                 for tmp_str in ['iemocap', 'crema-d', 'msp-improv']:
                     weights[tmp_str] = 0
                 for key in train_dict:
                     weights[train_dict[key]['dataset']] += 1
+                weights = get_class_weight(weights)
+            '''
+            
+            if 'combine' in args.dataset:
+                weights = {}
+                for key in train_dict:
+                    speaker_id = str(train_dict[key]['speaker_id'])+'_'+train_dict[key]['dataset']
+                    if speaker_id not in weights:
+                        weights[speaker_id] = 0
+                    weights[speaker_id] += 1
                 weights = get_class_weight(weights)
             
             # Data loaders
@@ -295,7 +331,7 @@ if __name__ == '__main__':
             # noise model
             mus = torch.zeros((1, int(args.win_len), feature_len)).to(device)
             scale = torch.ones((1, int(args.win_len), feature_len)).to(device)
-            noise_model = cloak_noise(mus, scale, torch.tensor(0.01).to(device), torch.tensor(5).to(device), device)
+            noise_model = cloak_noise(mus, scale, torch.tensor(0.01).to(device), torch.tensor(10).to(device), device)
             noise_model = noise_model.to(device)
 
             loss = nn.CrossEntropyLoss().to(device)
@@ -310,6 +346,25 @@ if __name__ == '__main__':
                                        attention_size=att_size,
                                        att=args.att,
                                        global_feature=int(args.global_feature))
+            elif args.model_type == 'deep-2d-cnn-lstm':
+                pre_trained_baseline_model = deep_two_d_cnn_lstm(input_channel=int(args.input_channel), 
+                                                                 input_spec_size=feature_len, 
+                                                                 cnn_filter_size=filter_size, 
+                                                                 pred=args.pred,
+                                                                 lstm_hidden_size=hidden_size, 
+                                                                 num_layers_lstm=2, 
+                                                                 attention_size=att_size,
+                                                                 att=args.att,
+                                                                 global_feature=int(args.global_feature))
+                gender_model = deep_two_d_cnn_lstm(input_channel=int(args.input_channel), 
+                                                   input_spec_size=feature_len, 
+                                                   cnn_filter_size=filter_size, 
+                                                   pred=args.pred,
+                                                   lstm_hidden_size=hidden_size, 
+                                                   num_layers_lstm=2, 
+                                                   attention_size=att_size,
+                                                   att=args.att,
+                                                   global_feature=int(args.global_feature))
             else:
                 pre_trained_baseline_model = two_d_cnn_lstm(input_channel=int(args.input_channel), 
                                                             input_spec_size=feature_len, 
@@ -321,29 +376,26 @@ if __name__ == '__main__':
                                                             att=args.att,
                                                             global_feature=int(args.global_feature))
 
-                pretrained_gender_model = two_d_cnn_lstm(input_channel=int(args.input_channel), 
-                                                         input_spec_size=feature_len, 
-                                                         cnn_filter_size=filter_size, 
-                                                         pred='gender',
-                                                         lstm_hidden_size=hidden_size, 
-                                                         num_layers_lstm=2, 
-                                                         attention_size=att_size,
-                                                         att=args.att,
-                                                         global_feature=int(args.global_feature))
+                gender_model = two_d_cnn_lstm(input_channel=int(args.input_channel), 
+                                              input_spec_size=feature_len, 
+                                              cnn_filter_size=filter_size, 
+                                              pred='gender',
+                                              lstm_hidden_size=hidden_size, 
+                                              num_layers_lstm=2, 
+                                              attention_size=att_size,
+                                              att=args.att,
+                                              global_feature=int(args.global_feature))
 
             # map to device
             pre_trained_baseline_model = pre_trained_baseline_model.to(device)
-            pretrained_gender_model = pretrained_gender_model.to(device)
+            gender_model = gender_model.to(device)
 
             # load the pretrained model
             baseline_model_result_path = Path.cwd().parents[0].joinpath(root_result_str, exp_result_str, save_global_feature, save_aug, args.model_type, args.feature_type, args.dataset, args.input_spec_size, model_param_str, args.pred, save_row_str)
             pre_trained_baseline_model.load_state_dict(torch.load(str(baseline_model_result_path.joinpath('model.pt')), map_location=device))
             
-            gender_model_result_path = Path.cwd().parents[0].joinpath(root_result_str, exp_result_str, save_global_feature, save_aug, args.model_type, args.feature_type, args.dataset, args.input_spec_size, model_param_str, 'gender', save_row_str)
-            pretrained_gender_model.load_state_dict(torch.load(str(gender_model_result_path.joinpath('model.pt')), map_location=device))
-
             # load cloak models
-            cloak_model = two_d_cnn_lstm_syn_with_grl(pre_trained_baseline_model.to(device), pretrained_gender_model.to(device), noise_model.to(device))
+            cloak_model = two_d_cnn_lstm_syn_with_grl(pre_trained_baseline_model.to(device), gender_model.to(device), noise_model.to(device), float(args.grl_lambda))
             cloak_model = cloak_model.to(device)
             
             if int(args.suppression_ratio) != 0:
@@ -365,8 +417,8 @@ if __name__ == '__main__':
                 optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, cloak_model.parameters()), lr=0.001, momentum=0.9, weight_decay=1e-4)
                 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5) 
             elif args.optimizer == 'adam':
-                optimizer = optim.Adam(filter(lambda p: p.requires_grad, cloak_model.parameters()), lr=0.001, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
-                scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5, verbose=True)
+                optimizer = optim.Adam(filter(lambda p: p.requires_grad, cloak_model.parameters()), lr=0.0005, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
+                scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=3, factor=0.5, verbose=True)
 
             model_parameters = filter(lambda p: p.requires_grad, cloak_model.parameters())
             params = sum([np.prod(p.size()) for p in model_parameters])
@@ -395,7 +447,8 @@ if __name__ == '__main__':
                     final_recall = test_result[args.dataset]['rec'][args.pred]
                     final_confusion = test_result[args.dataset]['conf'][args.pred]
                     best_epoch = epoch
-                    best_model = cloak_model.state_dict()
+                    
+                    best_model = deepcopy(cloak_model.state_dict())
 
                 # early_stopping needs the validation loss to check if it has decresed, 
                 # and if it has, it will make a checkpoint of the current model

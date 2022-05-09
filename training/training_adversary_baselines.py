@@ -15,14 +15,15 @@ from sklearn.metrics import accuracy_score, recall_score, precision_score, f1_sc
 import pandas as pd
 from sklearn.metrics import confusion_matrix
 import math
+from copy import deepcopy
 
 import sys, os
 sys.path.append(os.path.join(os.path.abspath(os.path.curdir), '..', 'model'))
 sys.path.append(os.path.join(os.path.abspath(os.path.curdir), '..', 'utils'))
 
 from training_tools import EarlyStopping, SpeechDataGenerator
-from training_tools import speech_collate, setup_seed, seed_worker
-from baseline_models import one_d_cnn_lstm, two_d_cnn_lstm, two_d_cnn
+from training_tools import speech_collate, setup_seed, seed_worker, get_class_weight
+from baseline_models import one_d_cnn_lstm, two_d_cnn_lstm, two_d_cnn, deep_two_d_cnn_lstm, deep_two_d_cnn_lstm_tmp
 import pdb
 from torch.autograd import Variable
 from sklearn.model_selection import train_test_split, KFold
@@ -48,7 +49,12 @@ def test(model, device, data_loader, optimizer, loss, epoch, args, pred='emotion
     truth_dict[args.dataset] = []
 
     if args.dataset == 'combine':
-        for tmp_str in ['iemocap', 'crema-d', 'msp-improv']:
+        tmp_list = ['iemocap', 'crema-d', 'msp-improv']
+    elif args.dataset == 'combine_two':
+        tmp_list = ['iemocap', 'crema-d']
+        
+    if 'combine' in args.dataset:
+        for tmp_str in tmp_list:
             predict_dict[tmp_str] = []
             truth_dict[tmp_str] = []
     
@@ -78,7 +84,7 @@ def test(model, device, data_loader, optimizer, loss, epoch, args, pred='emotion
         mean_predictions = np.mean(np.array(pred_list), axis=0)
         prediction = np.argmax(mean_predictions)
 
-        if args.dataset == 'combine':
+        if 'combine' in args.dataset:
             predict_dict[dataset_data[0]].append(prediction)
             truth_dict[dataset_data[0]].append(labels_arr.detach().cpu().numpy()[0][0])
         predict_dict[args.dataset].append(prediction)
@@ -102,8 +108,8 @@ def test(model, device, data_loader, optimizer, loss, epoch, args, pred='emotion
     tmp_result_dict[args.dataset]['rec'][args.pred] = rec_score
     tmp_result_dict[args.dataset]['conf'][args.pred] = confusion_matrix_arr
 
-    if args.dataset == 'combine':
-        for tmp_str in ['iemocap', 'crema-d', 'msp-improv']:
+    if 'combine' in args.dataset:
+        for tmp_str in tmp_list:
             tmp_result_dict[tmp_str] = {}
             tmp_result_dict[tmp_str]['acc'] = {}
             tmp_result_dict[tmp_str]['rec'] = {}
@@ -138,7 +144,12 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
     truth_dict[args.dataset] = []
 
     if args.dataset == 'combine':
-        for tmp_str in ['iemocap', 'crema-d', 'msp-improv']:
+        tmp_list = ['iemocap', 'crema-d', 'msp-improv']
+    elif args.dataset == 'combine_two':
+        tmp_list = ['iemocap', 'crema-d']
+
+    if 'combine' in args.dataset:
+        for tmp_str in tmp_list:
             predict_dict[tmp_str] = []
             truth_dict[tmp_str] = []
     
@@ -150,6 +161,7 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
         lengths = torch.from_numpy(np.asarray([torch_tensor.numpy() for torch_tensor in sampled_batch[3]])).squeeze()
         global_data = torch.from_numpy(np.asarray([torch_tensor.numpy() for torch_tensor in sampled_batch[4]]))
         dataset_data = [dataset for dataset in sampled_batch[5]]
+        speaker_id_data = [str(speaker_id) for speaker_id in sampled_batch[7]]
  
         features, labels_emo, labels_gen, lengths, global_data = features.to(device), labels_emo.to(device), labels_gen.to(device), lengths.to(device), global_data.to(device)
         if len(features.shape) == 3: features = features.unsqueeze(dim=1)
@@ -159,13 +171,12 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
         preds = model(features, global_feature=global_data) if int(args.global_feature) == 1 else model(features)
 
         # calculate loss
-        if args.dataset == 'combine':
+        if 'combine' in args.dataset:
             total_loss = 0
             for pred_idx in range(len(preds)):
-                total_loss += loss(preds[pred_idx].unsqueeze(dim=0), labels_arr[pred_idx]) * weights[dataset_data[pred_idx]]
+                speaker_id = speaker_id_data[pred_idx]+'_'+dataset_data[pred_idx]
+                total_loss += loss(preds[pred_idx].unsqueeze(dim=0), labels_arr[pred_idx]) * weights[speaker_id]
             total_loss = total_loss / len(preds)
-        else:
-            total_loss = loss(preds, labels_arr[0]) if len(labels_emo) == 1 else loss(preds, labels_arr.squeeze())
         total_loss_list.append(total_loss.item())
         train_loss_list.append(total_loss.item())
 
@@ -177,7 +188,7 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
         
         # get the prediction results
         predictions = np.argmax(preds.detach().cpu().numpy(), axis=1)
-        if args.dataset == 'combine':
+        if 'combine' in args.dataset:
             for pred_idx in range(len(predictions)):
                 predict_dict[dataset_data[pred_idx]].append(predictions[pred_idx])
                 truth_dict[dataset_data[pred_idx]].append(labels_arr.detach().cpu().numpy()[pred_idx][0])
@@ -191,8 +202,9 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
 
     # if validate mode, step the loss        
     if args.optimizer == 'adam':
+        mean_loss = np.mean(train_loss_list)
         if mode == 'validate':
-            scheduler.step(total_loss)
+            scheduler.step(mean_loss)
             print('validate loss step')
     else:
         scheduler.step()
@@ -237,26 +249,6 @@ def train(model, device, data_loader, optimizer, loss, epoch, args, mode='traini
             tmp_result_dict[tmp_str]['conf'][args.pred] = confusion_matrix_arr
     
     return tmp_result_dict
-
-
-def get_class_weight(labels_dict):
-    """Calculate the weights of different categories
-
-    >>> get_class_weight({0: 633, 1: 898, 2: 641, 3: 699, 4: 799})
-    {0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}
-    >>> get_class_weight({0: 5, 1: 78, 2: 2814, 3: 7914})
-    {0: 7.366950709511269, 1: 4.619679795255778, 2: 1.034026384271035, 3: 1.0}
-    """
-    total = sum(labels_dict.values())
-    max_num = max(labels_dict.values())
-    mu = 1.0 / (total / max_num)
-    class_weight = dict()
-    for key, value in labels_dict.items():
-        # score = math.log(mu * total / float(value))
-        score = total / (float(value) * len(labels_dict))
-        class_weight[key] = score if score > 1.0 else 1.0
-    # pdb.set_trace()
-    return class_weight
             
 
 if __name__ == '__main__':
@@ -270,11 +262,11 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', default='iemocap')
     parser.add_argument('--feature_type', default='mel_spec')
     parser.add_argument('--input_channel', default=1)
-    parser.add_argument('--input_spec_size', default=128)
+    parser.add_argument('--input_spec_size', default=64)
     parser.add_argument('--cnn_filter_size', type=int, default=32)
     parser.add_argument('--num_emo_classes', default=4)
     parser.add_argument('--num_gender_class', default=2)
-    parser.add_argument('--batch_size', default=30)
+    parser.add_argument('--batch_size', default=32)
     parser.add_argument('--aug', default=None)
     parser.add_argument('--use_gpu', default=True)
     parser.add_argument('--num_epochs', default=50)
@@ -343,13 +335,23 @@ if __name__ == '__main__':
             with open(preprocess_path.joinpath(args.dataset, save_row_str, 'test_'+str(int(args.win_len))+'_'+args.norm+'_aug_'+args.aug+'.pkl'), 'rb') as f:
                 test_dict = pickle.load(f)
 
-            if args.dataset == 'combine':
+            if 'combine' in args.dataset:
+                # tmp_list = ['iemocap', 'crema-d', 'msp-improv'] if args.dataset == 'combine' else ['iemocap', 'crema-d']
                 weights = {}
-                for tmp_str in ['iemocap', 'crema-d', 'msp-improv']:
-                    weights[tmp_str] = 0
                 for key in train_dict:
-                    weights[train_dict[key]['dataset']] += 1
+                    speaker_id = str(train_dict[key]['speaker_id'])+'_'+train_dict[key]['dataset']
+                    if speaker_id not in weights:
+                        weights[speaker_id] = 0
+                    weights[speaker_id] += 1
+                
+                for key in validate_dict:
+                    speaker_id = str(validate_dict[key]['speaker_id'])+'_'+validate_dict[key]['dataset']
+                    if speaker_id not in weights:
+                        weights[speaker_id] = 0
+                    weights[speaker_id] += 1
+            
                 weights = get_class_weight(weights)
+                print(weights)
             
             # Data loaders
             dataset_train = SpeechDataGenerator(train_dict, list(train_dict.keys()), mode='train', input_channel=int(args.input_channel))
@@ -362,10 +364,10 @@ if __name__ == '__main__':
             dataloader_test = DataLoader(dataset_test, batch_size=1, num_workers=0, shuffle=False, collate_fn=speech_collate)
 
             # Model related
-            device = torch.device("cuda:0") if torch.cuda.is_available() else "cpu"
+            device = torch.device("cuda:1") if torch.cuda.is_available() else "cpu"
             if torch.cuda.is_available(): print('GPU available, use GPU')
 
-            if args.model_type == '1d-cnn-lstm-att':
+            if args.model_type == '1d-cnn-lstm':
                 model = one_d_cnn_lstm(input_channel=int(args.input_channel), 
                                        input_spec_size=feature_len, 
                                        cnn_filter_size=filter_size, 
@@ -381,6 +383,26 @@ if __name__ == '__main__':
                                   cnn_filter_size=filter_size, 
                                   pred=args.pred,
                                   global_feature=int(args.global_feature))
+            elif args.model_type == 'deep-2d-cnn-lstm':
+                model = deep_two_d_cnn_lstm(input_channel=int(args.input_channel), 
+                                            input_spec_size=feature_len, 
+                                            cnn_filter_size=filter_size, 
+                                            pred=args.pred,
+                                            lstm_hidden_size=hidden_size, 
+                                            num_layers_lstm=2, 
+                                            attention_size=att_size,
+                                            att=args.att,
+                                            global_feature=int(args.global_feature))
+            elif args.model_type == 'tmp':
+                model = deep_two_d_cnn_lstm_tmp(input_channel=int(args.input_channel), 
+                                                input_spec_size=feature_len, 
+                                                cnn_filter_size=filter_size, 
+                                                pred=args.pred,
+                                                lstm_hidden_size=hidden_size, 
+                                                num_layers_lstm=2, 
+                                                attention_size=att_size,
+                                                att=args.att,
+                                                global_feature=int(args.global_feature))
             else:
                 model = two_d_cnn_lstm(input_channel=int(args.input_channel), 
                                        input_spec_size=feature_len, 
@@ -400,10 +422,10 @@ if __name__ == '__main__':
 
             # initialize the optimizer
             if args.optimizer == 'sgd':
-                optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=1e-4)
-                scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5) 
+                optimizer = torch.optim.SGD(model.parameters(), lr=0.0001, momentum=0.9, weight_decay=1e-4)
+                scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5) 
             elif args.optimizer == 'adam':
-                optimizer = optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
+                optimizer = optim.Adam(model.parameters(), lr=0.00005, weight_decay=1e-04, betas=(0.9, 0.98), eps=1e-9)
                 scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=3, factor=0.2, verbose=True)
 
             model_parameters = filter(lambda p: p.requires_grad, model.parameters())
@@ -413,7 +435,9 @@ if __name__ == '__main__':
             best_val_recall, final_recall, best_epoch, final_confusion = 0, 0, 0, 0
             best_val_acc, final_acc = 0, 0
             result_dict = {}
-            for epoch in range(args.num_epochs):
+            
+            num_epochs = 100 if args.optimizer == 'sgd' else args.num_epochs
+            for epoch in range(num_epochs):
                 
                 # perform the training, validate, and test
                 train_result = train(model, device, dataloader_train, optimizer, loss, epoch, args, mode='training', pred=args.pred)
@@ -433,7 +457,7 @@ if __name__ == '__main__':
                     final_recall = test_result[args.dataset]['rec'][args.pred]
                     final_confusion = test_result[args.dataset]['conf'][args.pred]
                     best_epoch = epoch
-                    best_model = model.state_dict()
+                    best_model = deepcopy(model.state_dict())
 
                 # early_stopping needs the validation loss to check if it has decresed, 
                 # and if it has, it will make a checkpoint of the current model
@@ -450,9 +474,10 @@ if __name__ == '__main__':
                 print('hidden size %d, filter size: %d, att size: %d' % (hidden_size, filter_size, att_size))
                 print(test_result[args.dataset]['conf'][args.pred])
                 
-                if early_stopping.early_stop and epoch > 10:
-                    print("Early stopping")
-                    break
+                if args.optimizer != 'sgd':
+                    if early_stopping.early_stop and epoch > 10:
+                        print("Early stopping")
+                        break
             
             root_result_str = '2022_icassp_result'
             save_result_df = pd.concat([save_result_df, row_df])
